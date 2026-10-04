@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D00000000000000000000002 /* Vendor/ArchiveRar.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D00000000000000000000001 /* Vendor/ArchiveRar.xcframework */; };
 		C00000000000000000000002 /* Vendor/ArchiveCodecs.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = C00000000000000000000001 /* Vendor/ArchiveCodecs.xcframework */; };
 /* End PBXBuildFile section */
 
@@ -21,6 +22,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		D00000000000000000000001 /* Vendor/ArchiveRar.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/ArchiveRar.xcframework; sourceTree = "<group>"; };
 		A00000000000000000000007 /* ArchiveDeskIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ArchiveDeskIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000000000000000000003 /* ArchiveDeskIOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ArchiveDeskIOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C00000000000000000000001 /* Vendor/ArchiveCodecs.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Vendor/ArchiveCodecs.xcframework; sourceTree = "<group>"; };
@@ -45,6 +47,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C00000000000000000000002 /* Vendor/ArchiveCodecs.xcframework in Frameworks */,
+				D00000000000000000000002 /* Vendor/ArchiveRar.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -62,6 +65,7 @@
 			isa = PBXGroup;
 			children = (
 				C00000000000000000000001 /* Vendor/ArchiveCodecs.xcframework */,
+				D00000000000000000000001 /* Vendor/ArchiveRar.xcframework */,
 				A00000000000000000000006 /* ArchiveDeskIOS */,
 				B00000000000000000000002 /* ArchiveDeskIOSUITests */,
 				A00000000000000000000004 /* Products */,
@@ -226,7 +230,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -237,7 +241,7 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportsDocumentBrowser = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -251,6 +255,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Vendor/RARSupport";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
@@ -264,7 +269,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ArchiveDesk;
@@ -274,7 +279,7 @@
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportsDocumentBrowser = NO;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lz",
@@ -287,6 +292,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Vendor/RARSupport";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
