@@ -1,0 +1,6 @@
+module CArchiveRar {
+    header "ArchiveRar.h"
+    export *
+    link "ArchiveRar"
+    link "c++"
+}
