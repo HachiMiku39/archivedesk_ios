@@ -78,7 +78,7 @@ IPA SHA-256：`96eb24c66bec9d5fdd07c01f18e5066fddc7c26e265ee236000090710e02ea6d`
 
 用具备对应 SDK 的 Xcode 打开 `ArchiveDeskIOS.xcodeproj`，选择 `ArchiveDeskIOS` scheme。Duo 调试使用 `ArchiveDeskIOS-DuoDebug`。
 
-**复现本次 0.2.0 IPA 请下载 Release 中明确命名的 `ArchiveDesk-0.2.0-source.tar.gz`。** 它是构建时完整对应项目（本地提交 `d807fa6` 后续发布说明更新），含新功能与依赖。GitHub 自动生成的 “Source code (zip/tar.gz)” 只是标签对应的仓库快照，不作为本次 IPA 的对应源码包；仓库文件同步完成前可能仍保留上一版应用代码。
+**复现本次 0.2.0 IPA 建议下载 Release 中明确命名的 `ArchiveDesk-0.2.0-source.tar.gz`。** 它是完整对应项目，含新功能、依赖与发布说明，并与重链接材料配套。仓库也已同步新版源码；GitHub 自动生成的 “Source code (zip/tar.gz)” 是发布标签对应的仓库快照。
 
 仓库附带 XCFramework 和校验过的上游源码压缩包。编译应用不需要安装桌面 7-Zip。未签名 Release 示例：
 
