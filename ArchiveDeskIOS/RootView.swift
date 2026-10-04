@@ -46,6 +46,9 @@ struct RootView: View {
             .alert("ArchiveDesk", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
                 Button("OK", role: .cancel) { model.errorMessage = nil }
             } message: { Text(model.errorMessage ?? "") }
+            .sheet(isPresented: $model.isPasswordPresented, onDismiss: {
+                if model.isPasswordPresented == false { model.cancelPassword() }
+            }) { ArchivePasswordView(model: model) }
             .onChange(of: scenePhase) { _, phase in
                 // Foreground-only MVP. Folding itself never cancels or resets state.
                 if phase == .background { model.cancel() }
@@ -63,6 +66,9 @@ struct RootView: View {
                 // Rebuild native navigation chrome when crossing compact/regular
                 // displays. Workspace state lives above this identity boundary.
                 browser.id(horizontalSizeClass)
+            }
+            Tab("Create archive", systemImage: "archivebox.fill", value: WorkspaceSection.packing) {
+                NavigationStack { PackingView(model: model) }
             }
             Tab("Tasks", systemImage: "list.bullet.rectangle", value: WorkspaceSection.tasks) {
                 NavigationStack { TaskView(model: model) }
@@ -248,7 +254,9 @@ struct InformationView: View {
                 LabeledContent("ZIP stored / Deflate", value: String(localized: "Available"))
                 LabeledContent("7z, RAR, TAR, ISO", value: String(localized: "Native format decoder"))
                 LabeledContent("gzip, bzip2, XZ / LZMA", value: String(localized: "Native format decoder"))
-                Text("Support depends on the archive codec. Encrypted and multivolume archives and archive creation are not available.")
+                LabeledContent("Password-protected RAR4 / RAR5", value: String(localized: "Available"))
+                LabeledContent("ZIP / TAR creation", value: String(localized: "Available"))
+                Text("RAR supports password extraction, including tested solid and encrypted-header archives. Multi-volume archives, encrypted ZIP / 7z and encrypted creation are not available. RAR creation is never offered.")
                 NavigationLink("Open-source notices") { CodecNoticesView() }
             }
             Section("Storage access") {

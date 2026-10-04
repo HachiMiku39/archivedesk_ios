@@ -313,11 +313,12 @@ struct ZIPArchive: Sendable {
 struct ExtractionRollbackFailure: LocalizedError {
   let stagingFolder: String
   let cause: String
+  var packing = false
   var errorDescription: String? {
-    String(
+    (packing ? String(localized: "Archive creation failed and the temporary folder could not be removed. Reconnect the drive and remove only this unfinished folder:") : String(
       localized:
         "Extraction failed and the temporary folder could not be removed. Reconnect the drive and remove only this unfinished folder:"
-    )
+    ))
       + " " + stagingFolder + "\n" + cause
   }
 }

@@ -13,9 +13,10 @@ struct ArchiveEntry: Identifiable, Hashable, Sendable {
     var rawName: Data = Data()
     var nativeFormat: String? = nil
     var hasCRC: Bool = true
+    var passwordDecodable: Bool = false
     var isDirectory: Bool { path.hasSuffix("/") }
     var isEncrypted: Bool { flags & 0x41 != 0 }
-    var isExtractable: Bool { !isEncrypted && !isLink && (isDirectory || compressionMethod == 0 || compressionMethod == 8 || nativeFormat != nil) }
+    var isExtractable: Bool { (!isEncrypted || passwordDecodable) && !isLink && (isDirectory || compressionMethod == 0 || compressionMethod == 8 || nativeFormat != nil) }
     var methodName: String {
         if nativeFormat != nil { return String(localized: "Native format decoder") }
         if compressionMethod == 0 { return String(localized: "Stored") }
@@ -25,17 +26,18 @@ struct ArchiveEntry: Identifiable, Hashable, Sendable {
 }
 
 enum WorkspaceSection: String, CaseIterable, Identifiable {
-    case files, tasks, information
+    case files, packing, tasks, information
     var id: Self { self }
     var title: String {
         switch self {
         case .files: return String(localized: "Files")
+        case .packing: return String(localized: "Create archive")
         case .tasks: return String(localized: "Tasks")
         case .information: return String(localized: "Information")
         }
     }
     var symbol: String {
-        switch self { case .files: "archivebox"; case .tasks: "list.bullet.rectangle"; case .information: "info.circle" }
+        switch self { case .files: "archivebox"; case .packing: "archivebox.fill"; case .tasks: "list.bullet.rectangle"; case .information: "info.circle" }
     }
 }
 

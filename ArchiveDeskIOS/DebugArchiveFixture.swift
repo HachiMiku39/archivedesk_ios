@@ -1,8 +1,7 @@
 #if DEBUG
 import Foundation
 
-/// Deterministic, local-only data for Simulator/debug sessions. No ZIP creation
-/// capability is exposed by the product until a production writer is verified.
+/// Deterministic local-only fixtures; not included in Release builds.
 enum DebugArchiveFixture {
     static func bytes(_ records: [(String, Data)]) -> Data {
         var archive = Data(), directory = Data()
@@ -26,6 +25,14 @@ enum DebugArchiveFixture {
     static func create() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-Debug-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if ProcessInfo.processInfo.arguments.contains("--fixture-rar-headers") {
+            // libarchive 3.8.9 test_read_format_rar5_encrypted_filenames.rar,
+            // public upstream test fixture. Password: password. Payloads: a–d.txt.
+            let encoded = "UmFyIRoHAQCuI9KQIQQAAAEPaAuw0KfIvaHedKdxMjSbGbcKghg7J7kA48ppJRDshMehHkYtfQ41TsTW1krt6Tl3x7oj46TcFBvKdO5M3PzcxjhfvPaKM+6VdtWzTK5WbLTVjAZAKU39cHaXSmTHGareMmi1q2J0+Rt3M4QJjUwX3IACEDNux82FP6G5qdUhXD3hLZOVH//RjmJUmafz277uR1+RWwOL0xV4OHCguxCdWrT6eabORj2lcFFtRNvxTsQm67rpS0z3AOSzmSQc60PMdPI3rULZC8LqGEHJ/T2Mm3Ffd+7tpOW7qhPeQ2V30iTNxp2cTxHfLL4EQ9f42IflyMXRjh4iusRr0VhKYKGL0gW9h/JKrh9F2TzMQibzIs3R2OhoO1W1Qu8NFBgqZxNmqF+HvJIqyVLSzEVqvP4hT3Utzq7ySXFw/UEnh3z3BzzIUph/NJ6a7af2VkBmg0nnZsQBR0m7ahocZnQO7HFXN8aeCGIY5D6DWSb1OaMTLdcElWzYjQSp7Pcv6eneNTwR5cHq3/mqP92qNxXphWUcfAbn03co9gd5zQJzK8fzr4xEoO5Bc6rA7R7f6I8I/89e1a/0rPlottbw3qfTA5ZzWGFWsg0QN1cGUl7L/me6FLrm3HG3eAMOd9Dzpbh75hJbutWAVrQRq9gp0WvY3DB9OhEF/Vt8l9zQGckAC0MaoXeO0vwijsZEjCn1Sc3Jx8ZhiqsoVXcEDbGFc+uDNu7VrlfAVWM3zoncn1UBBOLg61LVu8bq7XqNKKyD28RZcpbv7pFfNQQS1MYyEO+tPwY39fSWuL2iVN8iDXbz2b/sDFUwxTWwi00menGYlJJgOoQRxagRx+O525pnIfDSazWQUk8Hj31OBaNlAdbU2mzLr1ssqcSngnENtmV2XS055B91I1iUXTvfA1Hd3HDk8UhFzN/mfPg9zJt1eO72RA=="
+            let url = directory.appendingPathComponent("Password RAR5.rar")
+            try Data(base64Encoded: encoded)!.write(to: url)
+            return url
+        }
         if let kind = ProcessInfo.processInfo.arguments.first(where: { $0 == "--fixture-7z" || $0 == "--fixture-deflate" || $0 == "--fixture-cp437" }) {
             let is7z = kind == "--fixture-7z"
             let encoded = is7z
@@ -49,6 +56,17 @@ enum DebugArchiveFixture {
             ("Documents/中文.txt", Data("归档预览与文件选择状态。\n".utf8))
         ]).write(to: url)
         return url
+    }
+
+    static func packingSources() throws -> [URL] {
+        let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("PackingFixtures", isDirectory: true)
+        let folder = root.appendingPathComponent("SourceA", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("Empty"), withIntermediateDirectories: true)
+        try Data("first source 日本語".utf8).write(to: folder.appendingPathComponent("中文.txt"))
+        let second = root.appendingPathComponent("other.txt")
+        try Data("second source".utf8).write(to: second)
+        return [folder, second]
     }
 }
 
