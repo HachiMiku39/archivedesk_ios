@@ -25,7 +25,17 @@ Readers stay on one synchronous thread through deinit. Vendor allocations are ca
 
 Listing validates paths/types/collisions and budgets. Leading ./ is stripped only as a harmless convention; .. is never resolved. Archive root records are skipped only for real non-link directories. Output is streamed to fresh owned staging and published by same-volume rename. ZIP retains independent CRC and strict header validation. TAR/ISO do not magically gain checksums.
 
-Cancellation is checked between headers/chunks; solid-stream skips can delay it. Selected-file extraction may re-decode earlier blocks. No hard CPU timeout or optimal solid-archive performance is claimed. Encryption, split volumes, Zstd/LZ4, creation and physical-drive/memory-pressure tests remain pending.
+Cancellation is checked between headers/chunks; solid-stream skips can delay it. Selected-file extraction may re-decode earlier blocks. No hard CPU timeout or optimal solid-archive performance is claimed. ZIP/7z encryption, split volumes, Zstd/LZ4 and physical-drive/memory-pressure tests remain pending.
+
+## Source-built RAR and archive creation
+
+RAR4/RAR5 now use the source-built 7-Zip 26.03 read-only bridge, with password,
+solid and encrypted-header fixture coverage. ZIP/TAR creation uses libarchive's
+Deflate ZIP and restricted PAX TAR writers. Multi-source inputs are coordinated
+private snapshots; output uses the existing destination policy, a fresh staging
+directory and same-volume publication. See [RAR-LICENSE-AND-RELINK.md](RAR-LICENSE-AND-RELINK.md)
+for source hashes, modifications and the required binary relink-kit checklist.
+The bounded allocator is not an app-wide or C++ new memory cap.
 
 ## Unicode names
 

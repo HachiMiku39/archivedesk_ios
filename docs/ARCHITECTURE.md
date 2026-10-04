@@ -4,7 +4,7 @@
 
 The mobile app keeps the macOS product's safety goals and pure-data inspection ideas, but not its `posix_spawn`/7zz execution model. Every iOS codec must run in process, have a reviewed license, expose cancellation, and operate with bounded streaming buffers.
 
-The current milestone includes bounded ZIP indexing, stored/Deflate extraction, small-text preview, folder navigation, policy-checked destinations, and static libarchive/liblzma readers for 7z, RAR/RAR5, TAR, compressed streams and ISO9660. Encryption, split volumes, dedicated IPA/APK inspection and archive creation remain separate milestones. ZIP retains strict custom central/local-header validation; other formats share one native facade. See [ARCHIVE-ENGINES.md](ARCHIVE-ENGINES.md).
+The current milestone includes bounded ZIP indexing, stored/Deflate extraction, small-text preview, folder navigation, policy-checked destinations, libarchive/liblzma readers, source-built read-only RAR password decoding, and multi-source ZIP/TAR creation. Encrypted creation, split volumes and dedicated IPA/APK inspection remain separate milestones. ZIP retains strict custom central/local-header validation. RAR handles live only on their synchronous worker thread; models do not retain passwords. See [ARCHIVE-ENGINES.md](ARCHIVE-ENGINES.md).
 
 ## File lifecycle
 
