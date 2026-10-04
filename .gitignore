@@ -1,0 +1,9 @@
+work/
+outputs/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+*.ipa
+*.xcarchive/
+*.xcresult/
+Tests/CoreVerification 2.swift

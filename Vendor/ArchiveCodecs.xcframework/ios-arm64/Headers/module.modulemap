@@ -1,0 +1,10 @@
+module CArchive {
+    link "ArchiveCodecs"
+  header "archive.h"
+  header "archive_entry.h"
+  header "ArchiveCodecs.h"
+  export *
+  link "z"
+  link "bz2"
+  link "iconv"
+}
