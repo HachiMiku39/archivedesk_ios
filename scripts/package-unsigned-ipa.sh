@@ -2,7 +2,8 @@
 set -eu
 cd "${0:A:h:h}"
 task_app="${1:?Pass a Release-iphoneos ArchiveDeskIOS.app path}"
-task_output="${2:-$PWD/outputs/ArchiveDesk-0.1.0-unsigned.ipa}"
+task_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$task_app/Info.plist")
+task_output="${2:-$PWD/outputs/ArchiveDesk-$task_version-unsigned.ipa}"
 [[ "$task_app" = /* && "$task_output" = /* ]] || { print -u2 'Use absolute paths'; exit 1; }
 [[ ! -e "$task_output" ]] || { print -u2 'Output exists; refusing to replace it'; exit 1; }
 task_executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$task_app/Info.plist")
