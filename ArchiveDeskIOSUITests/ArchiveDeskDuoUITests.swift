@@ -2,6 +2,104 @@ import XCTest
 
 final class ArchiveDeskDuoUITests: XCTestCase {
     @MainActor
+    func testPackingPickerCancellationPreservesSources() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--packing-fixtures", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let source = app.descendants(matching: .any)["packingSource.SourceA"].firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 15), app.debugDescription)
+        let add = app.buttons["addPackingSources"].firstMatch
+        waitForStableHitTarget(add); add.tap()
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 30), app.debugDescription)
+        waitForStableHitTarget(cancel); cancel.tap()
+        XCTAssertTrue(source.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["packingSource.other.txt"].firstMatch.exists)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    @MainActor
+    func testPasswordPromptCancellationReturnsToBrowser() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "--fixture-rar-headers", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        XCTAssertTrue(app.secureTextFields["archivePassword"].firstMatch.waitForExistence(timeout: 15))
+        let cancel = app.buttons["Cancel"].firstMatch
+        waitForStableHitTarget(cancel); cancel.tap()
+        let open = app.buttons["openArchive"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(open.isEnabled)
+        XCTAssertFalse(app.secureTextFields["archivePassword"].firstMatch.exists)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    @MainActor
+    func testMultiSourceZIPAndTARCreation() throws {
+        for format in ["ZIP", "TAR"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--packing-fixtures", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+            app.launch()
+            XCTAssertTrue(app.descendants(matching: .any)["packingSource.SourceA"].firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+            XCTAssertTrue(app.descendants(matching: .any)["packingSource.other.txt"].firstMatch.exists)
+            let choice = app.segmentedControls["packingFormat"].buttons[format]
+            XCTAssertTrue(choice.waitForExistence(timeout: 5), app.debugDescription)
+            choice.tap()
+            let create = app.buttons["createArchive"].firstMatch
+            waitForStableHitTarget(create); create.tap()
+            let local = app.buttons["ArchiveDesk on this device"].firstMatch
+            XCTAssertTrue(local.waitForExistence(timeout: 5))
+            waitForStableHitTarget(local); local.tap()
+            let receipt = app.descendants(matching: .any)["packingReceipt"].firstMatch
+            for _ in 0..<5 {
+                if receipt.waitForExistence(timeout: 1) { break }
+                app.collectionViews.firstMatch.swipeUp()
+            }
+            XCTAssertTrue(receipt.waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label ENDSWITH %@", "." + format.lowercased())).firstMatch.exists)
+            XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+            capture(app, name: "Multi-source " + format + " creation")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testPasswordRARHeadersRetryPreviewAndExtraction() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "--fixture-rar-headers", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        try submitFixturePassword("wrong", in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["passwordError"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        try submitFixturePassword("password", in: app)
+        let b = app.descendants(matching: .any)["entry.b.txt"].firstMatch
+        XCTAssertTrue(b.waitForExistence(timeout: 15), app.debugDescription)
+        b.tap()
+        // Opening headers must not retain a password for the subsequent preview.
+        try submitFixturePassword("password", in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["textPreview"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["This is from b.txt"].firstMatch.exists)
+        let extract = extractionAction(in: app)
+        waitForStableHitTarget(extract); extract.tap()
+        let local = app.buttons["ArchiveDesk on this device"].firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); waitForStableHitTarget(local); local.tap()
+        // Extraction is another operation and asks again, without saved secrets.
+        try submitFixturePassword("password", in: app)
+        let receipt = app.descendants(matching: .any)["extractionReceipt"].firstMatch
+        if !receipt.waitForExistence(timeout: 5) { app.swipeUp() }
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+        capture(app, name: "RAR5 password retry, preview and extraction")
+    }
+
+    @MainActor
+    private func submitFixturePassword(_ password: String, in app: XCUIApplication) throws {
+        let field = app.secureTextFields["archivePassword"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 15), app.debugDescription)
+        waitForStableHitTarget(field); field.tap(); field.typeText(password)
+        let submit = app.buttons["submitArchivePassword"].firstMatch
+        waitForStableHitTarget(submit); submit.tap()
+    }
+
+    @MainActor
     func testOpenSourceNoticesAreReadable() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--demo-archive", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
