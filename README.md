@@ -4,7 +4,7 @@ ArchiveDesk 是面向 iPhone、iPad 和 iPhone Duo 自适应界面的压缩包�
 
 当前版本：**0.1.0 / 开发测试版**。最低系统：**iOS / iPadOS 26.0**。Duo 的新布局使用 iOS 27.1+ API，旧系统保留兼容布局。
 
-![ArchiveDesk icon](ArchiveDeskIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png)
+<img src="ArchiveDeskIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" alt="ArchiveDesk icon">
 
 ## 下载与安装
 
