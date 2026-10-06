@@ -20,8 +20,21 @@ struct LayoutDiagnostics: Equatable {
 @MainActor
 final class WorkspaceModel: ObservableObject {
     @Published var section: WorkspaceSection = .files
-    @Published var archive: ArchiveContainer?
-    @Published var navigation = ArchiveNavigation()
+    @Published var archive: ArchiveContainer? {
+        didSet { cachedFolder = nil; cachedRows = []; refreshSelection(); refreshBrowser() }
+    }
+    @Published var navigation = ArchiveNavigation() {
+        didSet {
+            if navigation.selection != oldValue.selection { refreshSelection() }
+            if navigation.folder != oldValue.folder || navigation.search != oldValue.search {
+                refreshBrowser(debounce: navigation.folder == oldValue.folder)
+            }
+        }
+    }
+    @Published private(set) var selectedEntry: ArchiveEntry?
+    @Published private(set) var browserItems: [BrowserItem] = []
+    @Published private(set) var isListing = false
+    @Published var compactColumn: NavigationSplitViewColumn = .sidebar
     // Start with the archive browser, not an empty detail-only iPad window.
     // SwiftUI still collapses these columns for compact phone widths.
     @Published var columnVisibility: NavigationSplitViewVisibility = .all
@@ -38,26 +51,119 @@ final class WorkspaceModel: ObservableObject {
     @Published var packingSources: [PackingSource] = []
     @Published var packingFormat: PackingFormat = .zip
     @Published var packingName = "Archive"
-    @Published var packingProgress: Double = 0
     @Published var packingReceipt: String?
     @Published var isPasswordPresented = false
     @Published var passwordError: String?
+    let performance = PerformanceModel()
+    var transferMetrics: OperationMetrics? { performance.transfer }
     private var passwordAction: PasswordAction?
     private var operation: Task<Void, Never>?
     private var previewOperation: Task<Void, Never>?
-    private var packingGeneration = UUID()
+    private var resourceMonitor: Task<Void, Never>?
+    private var progressMailbox: ProgressMailbox?
+    private var transferMeter: TransferMeter?
+    private var stoppedForMemory = false
+    private var browserOperation: Task<Void, Never>?
+    private var browserRevision = UUID()
+    private var cachedFolder: String?
+    private var cachedRows: [BrowserItem] = []
 
     isolated deinit {
+        resourceMonitor?.cancel(); operation?.cancel(); previewOperation?.cancel(); browserOperation?.cancel()
         for source in packingSources { try? FileManager.default.removeItem(at: source.snapshotDirectory) }
     }
 
-    var selectedEntry: ArchiveEntry? { archive?.entries.first { $0.path == navigation.selection } }
-    var browserItems: [BrowserItem] { ArchiveBrowser.items(entries: archive?.entries ?? [], navigation: navigation) }
+    private func refreshSelection() {
+        guard let path = navigation.selection else { selectedEntry = nil; return }
+        selectedEntry = archive?.entries.first { $0.path == path }
+    }
+    private func refreshBrowser(debounce: Bool = false) {
+        browserOperation?.cancel()
+        let revision = UUID(); browserRevision = revision
+        guard let archive else { browserItems = []; cachedRows = []; cachedFolder = nil; isListing = false; return }
+        let entries = archive.entries, folder = navigation.folder, query = navigation.search
+        let cached = cachedFolder == folder ? cachedRows : nil
+        if cached == nil { browserItems = [] }
+        isListing = true
+        browserOperation = Task {
+            do {
+                if debounce { try await Task.sleep(for: .milliseconds(200)) }
+                try Task.checkCancellation()
+                let worker = Task.detached(priority: .userInitiated) {
+                    let rows = try cached ?? ArchiveBrowser.folderItems(entries: entries, folder: folder)
+                    return (rows, try ArchiveBrowser.search(rows, query: query))
+                }
+                let result = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                guard !Task.isCancelled, browserRevision == revision else { return }
+                cachedFolder = folder; cachedRows = result.0; browserItems = result.1; isListing = false
+            } catch {
+                if browserRevision == revision { isListing = false }
+            }
+        }
+    }
+
+    func setForeground(_ active: Bool) {
+        resourceMonitor?.cancel(); resourceMonitor = nil
+        if !active { cancel(); return }
+        resourceMonitor = Task { [weak self] in
+            var sampler = ProcessSampler()
+            while !Task.isCancelled {
+                let sample = sampler.sample()
+                self?.performance.process = sample
+                self?.refreshTransfer()
+                if MemoryPolicy.shouldStop(headroom: sample.headroomBytes) { self?.handleMemoryPressure() }
+                do { try await Task.sleep(for: .seconds(1)) } catch { break }
+            }
+        }
+    }
+
+    func handleMemoryPressure() {
+        browserOperation?.cancel(); browserRevision = UUID()
+        if isListing { isListing = false }
+        cachedRows = []; cachedFolder = nil
+        previewOperation?.cancel()
+        if previewText != nil { previewText = nil }
+        if isBusy && !stoppedForMemory { stoppedForMemory = true; operation?.cancel() }
+    }
+
+    /// Cancel and drain the previous decoder before starting another worker.
+    private func prepareOperation() -> Task<Void, Never>? {
+        let preview = previewOperation
+        preview?.cancel(); previewOperation = nil
+        // Retain the already bounded text result in normal use. Only its
+        // decoder needs draining; a memory warning releases the text as well.
+        stoppedForMemory = false; performance.transfer = nil
+        progressMailbox = nil; transferMeter = nil
+        return preview
+    }
+    private func waitForPreview(_ task: Task<Void, Never>?) async -> Bool {
+        await task?.value
+        // Reserve room for a dictionary plus framework / I/O overhead before
+        // starting a decoder. This is conservative, not an allocation grant.
+        if !MemoryPolicy.allowsNewWork(headroom: MemoryPolicy.headroom()) { stoppedForMemory = true }
+        if Task.isCancelled || stoppedForMemory { finish(CancellationError()); isBusy = false; return false }
+        return true
+    }
+    private func startTransfer() -> ProgressMailbox {
+        let mailbox = ProgressMailbox()
+        progressMailbox = mailbox; transferMeter = TransferMeter()
+        performance.transfer = OperationMetrics()
+        return mailbox
+    }
+    private func refreshTransfer(finished: Bool = false, succeeded: Bool = false) {
+        guard let mailbox = progressMailbox, var meter = transferMeter else { return }
+        let sample = mailbox.read()
+        performance.transfer = meter.sample(bytes: sample.bytes, total: sample.total, finished: finished, succeeded: succeeded)
+        transferMeter = finished ? nil : meter
+        if finished { progressMailbox = nil }
+    }
 
     func importArchive(_ url: URL, alreadyPrivate: Bool = false, password: String? = nil) {
         guard !isBusy else { return }
+        let priorPreview = prepareOperation()
         isBusy = true; status = String(localized: "Preparing file…")
         operation = Task {
+            guard await waitForPreview(priorPreview) else { return }
             let worker = Task.detached(priority: .userInitiated) {
                 let snapshot = alreadyPrivate ? url : try CoordinatedFileAccess.snapshot(of: url)
                 do {
@@ -87,6 +193,7 @@ final class WorkspaceModel: ObservableObject {
                 archive = opened; navigation = ArchiveNavigation(); previewText = nil; exportedURL = nil
                 exportedEntryPath = nil; extractionLocation = nil
                 columnVisibility = .all
+                compactColumn = .sidebar
                 if let previous, previous != opened.url { try? FileManager.default.removeItem(at: previous.deletingLastPathComponent()) }
                 status = String(localized: "Archive ready")
             } catch {
@@ -103,13 +210,18 @@ final class WorkspaceModel: ObservableObject {
 
     func select(_ path: String?, password: String? = nil) {
         navigation.selection = path
+        compactColumn = path == nil ? .sidebar : .detail
+        let priorPreview = previewOperation
         previewOperation?.cancel(); previewText = nil
-        guard let archive, let entry = selectedEntry else { return }
+        guard !isBusy, MemoryPolicy.allowsNewWork(headroom: MemoryPolicy.headroom()),
+              let archive, let entry = selectedEntry else { return }
         if archive.requiresPassword(entry), password == nil, entry.uncompressedSize <= 256 * 1024,
            ["txt", "md", "json", "xml", "csv", "log", "swift", "plist", "yaml", "yml"].contains((entry.path as NSString).pathExtension.lowercased()) {
             requestPassword(.preview(entry.path)); return
         }
         previewOperation = Task {
+            await priorPreview?.value
+            guard !Task.isCancelled else { return }
             let worker = Task.detached { try archive.previewText(entry, password: password) }
             do {
                 let text = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
@@ -117,6 +229,7 @@ final class WorkspaceModel: ObservableObject {
                 if navigation.selection == path { previewText = text }
             } catch is CancellationError { }
             catch {
+                guard !Task.isCancelled else { return }
                 if navigation.selection == path {
                     if case RARFailure.passwordOrDamage = error, archive.requiresPassword(entry) { requestPassword(.preview(entry.path), error: error.localizedDescription) }
                     else { errorMessage = error.localizedDescription }
@@ -125,19 +238,23 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    func enterFolder(_ path: String) { previewOperation?.cancel(); previewText = nil; navigation.enter(path) }
-    func goUp() { previewOperation?.cancel(); previewText = nil; navigation.goUp() }
+    func enterFolder(_ path: String) { previewOperation?.cancel(); previewText = nil; navigation.enter(path); compactColumn = .sidebar }
+    func goUp() { previewOperation?.cancel(); previewText = nil; navigation.goUp(); compactColumn = .sidebar }
 
     func extractSelected(to pickedFolder: URL? = nil, password: String? = nil) {
         guard !isBusy, let archive, let entry = selectedEntry, entry.isExtractable else { return }
         if archive.requiresPassword(entry), password == nil { requestPassword(.extract(entry.path, pickedFolder)); return }
+        let priorPreview = prepareOperation()
+        let mailbox = startTransfer()
         isBusy = true; status = String(localized: "Extracting…"); exportedURL = nil
         exportedEntryPath = nil; extractionLocation = nil
         operation = Task {
+            guard await waitForPreview(priorPreview) else { return }
             let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Extractions", isDirectory: true)
             let worker = Task.detached(priority: .userInitiated) {
-                if let pickedFolder { return try CoordinatedFileAccess.extract(archive, paths: [entry.path], to: pickedFolder, password: password) }
-                return ExtractionResult(directory: try archive.extract(paths: [entry.path], outputRoot: root, password: password), destination: .appDocuments)
+                let progress: ArchiveProgress = { mailbox.update($0, $1) }
+                if let pickedFolder { return try CoordinatedFileAccess.extract(archive, paths: [entry.path], to: pickedFolder, password: password, progress: progress) }
+                return ExtractionResult(directory: try archive.extract(paths: [entry.path], outputRoot: root, password: password, progress: progress), destination: .appDocuments)
             }
             do {
                 let result = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
@@ -147,7 +264,9 @@ final class WorkspaceModel: ObservableObject {
                 extractionLocation = (pickedFolder?.lastPathComponent ?? String(localized: "ArchiveDesk on this device"))
                     + "/" + result.directory.lastPathComponent
                 status = String(localized: "Extraction complete")
+                refreshTransfer(finished: true, succeeded: true)
             } catch {
+                refreshTransfer(finished: true)
                 if case RARFailure.passwordOrDamage = error, archive.requiresPassword(entry) { requestPassword(.extract(entry.path, pickedFolder), error: error.localizedDescription) }
                 else { finish(error) }
             }
@@ -180,9 +299,11 @@ final class WorkspaceModel: ObservableObject {
 
     func addPackingSources(_ urls: [URL]) {
         guard !isBusy, !urls.isEmpty else { return }
+        let priorPreview = prepareOperation()
         isBusy = true; status = String(localized: "Preparing files…")
         let existing = packingSources
         operation = Task {
+            guard await waitForPreview(priorPreview) else { return }
             let worker = Task.detached(priority: .userInitiated) {
                 var added: [PackingSource] = []
                 var success = false
@@ -193,7 +314,7 @@ final class WorkspaceModel: ObservableObject {
                     let name = try PackingInput.uniqueName(url.lastPathComponent, used: names)
                     let source = try PackingInput.snapshot(url, name: name)
                     added.append(source); names.insert(name)
-                    _ = try ArchiveSafety.validate(entries: (existing + added).flatMap(\.items).map(\.entry), archiveBytes: 0)
+                    _ = try ArchiveSafety.validate(entries: (existing + added).lazy.flatMap(\.items).map(\.entry), archiveBytes: 0)
                 }
                 try Task.checkCancellation(); success = true
                 return added
@@ -221,17 +342,14 @@ final class WorkspaceModel: ObservableObject {
 
     func createArchive(to pickedFolder: URL? = nil) {
         guard !isBusy, !packingSources.isEmpty else { return }
+        let priorPreview = prepareOperation()
+        let mailbox = startTransfer()
         let sources = packingSources, format = packingFormat, name = packingName
         isBusy = true; status = String(localized: "Creating archive…")
-        let generation = UUID(); packingGeneration = generation
-        packingProgress = 0; packingReceipt = nil
+        packingReceipt = nil
         operation = Task { [self] in
-            let progress: @Sendable (UInt64, UInt64) -> Void = { [weak self] done, total in
-                Task { @MainActor in
-                    guard let self, self.isBusy, self.packingGeneration == generation else { return }
-                    self.packingProgress = total == 0 ? 0 : Double(done) / Double(total)
-                }
-            }
+            guard await waitForPreview(priorPreview) else { return }
+            let progress: ArchiveProgress = { mailbox.update($0, $1) }
             let worker = Task.detached(priority: .userInitiated) {
                 if let pickedFolder {
                     return try CoordinatedFileAccess.pack(sources: sources, format: format, name: name, to: pickedFolder, progress: progress)
@@ -244,14 +362,21 @@ final class WorkspaceModel: ObservableObject {
                 let url = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
                 packingReceipt = (pickedFolder?.lastPathComponent ?? String(localized: "ArchiveDesk on this device"))
                     + "/" + url.deletingLastPathComponent().lastPathComponent + "/" + url.lastPathComponent
-                packingProgress = 1; status = String(localized: "Archive created")
+                status = String(localized: "Archive created")
+                refreshTransfer(finished: true, succeeded: true)
             } catch { finish(error) }
             isBusy = false
         }
     }
 
     private func finish(_ error: Error) {
-        if error is CancellationError { status = String(localized: "Cancelled") }
+        refreshTransfer(finished: true)
+        if error is CancellationError {
+            status = String(localized: "Cancelled")
+            if stoppedForMemory {
+                errorMessage = String(localized: "Stopped to protect app memory. Temporary output was rolled back. Try a smaller selection or an archive with a smaller dictionary.")
+            }
+        }
         else { errorMessage = error.localizedDescription; status = String(localized: "Failed") }
     }
 

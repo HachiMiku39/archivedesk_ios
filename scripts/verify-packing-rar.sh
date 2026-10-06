@@ -16,7 +16,7 @@ xcrun swiftc -parse-as-library -swift-version 6 \
   -target arm64-apple-macosx26.0 -sdk "$(xcrun --sdk macosx --show-sdk-path)" \
   -module-cache-path work/ModuleCache -I "$task_codecs/Headers" -L "$task_codecs" \
   -I "$PWD/Vendor/RARSupport" -L "$task_rar" -lArchiveRar -lc++ -lArchiveCodecs -lz -lbz2 -liconv \
-  ArchiveDeskIOS/ArchiveModels.swift ArchiveDeskIOS/ArchiveSafety.swift ArchiveDeskIOS/CRC32.swift \
+  ArchiveDeskIOS/ArchiveModels.swift ArchiveDeskIOS/ArchiveSafety.swift ArchiveDeskIOS/OperationMetrics.swift ArchiveDeskIOS/CRC32.swift \
   ArchiveDeskIOS/ZIPArchive.swift ArchiveDeskIOS/ArchiveContainer.swift ArchiveDeskIOS/MultiFormatArchive.swift \
   ArchiveDeskIOS/CoordinatedFileAccess.swift ArchiveDeskIOS/ExtractionDestination.swift \
   ArchiveDeskIOS/ArchivePacking.swift ArchiveDeskIOS/RARArchive.swift Tests/PackingRARVerification.swift \

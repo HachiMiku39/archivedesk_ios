@@ -2,6 +2,13 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+// Separate template assets retain closed/open silhouettes in native selected
+// tabs; tint and dark-mode colors remain under the system's control.
+enum ArchiveActionIcon {
+    static let extract = "ArchiveBoxOpen"
+    static let create = "ArchiveBoxClosed"
+}
+
 struct RootView: View {
     @StateObject private var model = WorkspaceModel()
     @State private var isDestinationChoicePresented = false
@@ -51,9 +58,14 @@ struct RootView: View {
             }) { ArchivePasswordView(model: model) }
             .onChange(of: scenePhase) { _, phase in
                 // Foreground-only MVP. Folding itself never cancels or resets state.
-                if phase == .background { model.cancel() }
+                if phase == .background { model.setForeground(false) }
+                else if phase == .active { model.setForeground(true) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+                model.handleMemoryPressure()
             }
             .onAppear {
+                model.setForeground(scenePhase == .active)
                 #if DEBUG
                 model.loadDebugArchiveIfRequested()
                 #endif
@@ -62,12 +74,12 @@ struct RootView: View {
 
     private var tabs: some View {
         TabView(selection: $model.section) {
-            Tab("Files", systemImage: "archivebox", value: WorkspaceSection.files) {
+            Tab("Files", image: ArchiveActionIcon.extract, value: WorkspaceSection.files) {
                 // Rebuild native navigation chrome when crossing compact/regular
                 // displays. Workspace state lives above this identity boundary.
                 browser.id(horizontalSizeClass)
             }
-            Tab("Create archive", systemImage: "archivebox.fill", value: WorkspaceSection.packing) {
+            Tab("Create archive", image: ArchiveActionIcon.create, value: WorkspaceSection.packing) {
                 NavigationStack { PackingView(model: model) }
             }
             Tab("Tasks", systemImage: "list.bullet.rectangle", value: WorkspaceSection.tasks) {
@@ -83,7 +95,7 @@ struct RootView: View {
     }
 
     private var browser: some View {
-        NavigationSplitView(columnVisibility: $model.columnVisibility) {
+        NavigationSplitView(columnVisibility: $model.columnVisibility, preferredCompactColumn: $model.compactColumn) {
             Group {
                 if model.archive != nil {
                     List(selection: Binding(get: { model.navigation.selection }, set: { model.select($0) })) {
@@ -111,9 +123,15 @@ struct RootView: View {
                         }
                     }
                     .searchable(text: $model.navigation.search, prompt: "Search files")
+                    .overlay {
+                        if model.isListing && model.browserItems.isEmpty { ProgressView("Loading folder…") }
+                        else if !model.isListing && model.browserItems.isEmpty && !model.navigation.search.isEmpty {
+                            ContentUnavailableView.search(text: model.navigation.search)
+                        }
+                    }
                 } else {
                     ContentUnavailableView {
-                        Label("Open an archive", systemImage: "archivebox")
+                        Label("Open an archive", image: ArchiveActionIcon.extract)
                     } description: {
                         Text("Choose an archive from Files or a cloud provider.")
                     } actions: { openButton }
@@ -141,10 +159,10 @@ struct ArchiveToolbar: ToolbarContent {
     var body: some ToolbarContent {
         if #available(iOS 27.1, *) {
             ToolbarItem(placement: .primaryAction) { open }.axisBehavior(.verticalPreferred)
-            ToolbarItem(placement: .secondaryAction) { extract }.axisBehavior(.verticalPreferred)
+            ToolbarItem(placement: .primaryAction) { extract }.axisBehavior(.verticalPreferred)
         } else {
             ToolbarItem(placement: .primaryAction) { open }
-            ToolbarItem(placement: .secondaryAction) { extract }
+            ToolbarItem(placement: .primaryAction) { extract }
         }
     }
     private var open: some View {
@@ -153,7 +171,7 @@ struct ArchiveToolbar: ToolbarContent {
             .accessibilityIdentifier("openArchiveToolbar")
     }
     private var extract: some View {
-        Button(action: requestExtraction) { Label("Extract", systemImage: "tray.and.arrow.down") }
+        Button(action: requestExtraction) { Label("Extract", image: ArchiveActionIcon.extract) }
             .keyboardShortcut("e", modifiers: .command)
             .disabled(model.isBusy || model.selectedEntry?.isExtractable != true)
             .accessibilityIdentifier("extractSelected")
@@ -163,17 +181,22 @@ struct ArchiveToolbar: ToolbarContent {
 struct EntryDetailView: View {
     @ObservedObject var model: WorkspaceModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var textSize
 
     var body: some View {
-        Group {
+        GeometryReader { geometry in
             if let entry = model.selectedEntry {
-                if #available(iOS 27.1, *), sizeClass == .regular {
-                    ArrangementView {
-                        EntryPreview(entry: entry, text: model.previewText)
-                    } secondary: {
-                        metadata(entry)
-                    }
-                    .arrangementViewStyle(.split)
+                if sizeClass == .regular && geometry.size.width >= 720 && !textSize.isAccessibilitySize {
+                    #if DUO_SDK
+                    if #available(iOS 27.1, *) {
+                        ArrangementView {
+                            EntryPreview(entry: entry, text: model.previewText)
+                        } secondary: { metadata(entry) }
+                        .arrangementViewStyle(.split)
+                    } else { wideDetail(entry) }
+                    #else
+                    wideDetail(entry)
+                    #endif
                 } else {
                     // Both preview and actions stay reachable at compact widths.
                     Form {
@@ -188,21 +211,28 @@ struct EntryDetailView: View {
     }
 
     private func metadata(_ entry: ArchiveEntry) -> some View { Form { fields(entry) } }
+    private func wideDetail(_ entry: ArchiveEntry) -> some View {
+        HStack(spacing: 0) {
+            EntryPreview(entry: entry, text: model.previewText).frame(maxWidth: .infinity)
+            metadata(entry).frame(maxWidth: .infinity)
+        }
+    }
 
     @ViewBuilder private func fields(_ entry: ArchiveEntry) -> some View {
+        PerformanceSection(model: model)
         Section("Entry") {
-            LabeledContent("Path", value: entry.path).textSelection(.enabled)
-            LabeledContent("Size", value: entry.uncompressedSize.formatted(.byteCount(style: .file)))
-            LabeledContent("Format", value: model.archive?.formatName ?? "ZIP")
-            LabeledContent("Method", value: entry.methodName)
-            LabeledContent("Encrypted", value: entry.isEncrypted ? String(localized: "Yes") : String(localized: "No"))
-            if entry.hasCRC { LabeledContent("CRC-32", value: String(format: "%08X", entry.crc32)) }
+            AdaptiveValueRow("Path", value: entry.path).textSelection(.enabled)
+            AdaptiveValueRow("Size", value: entry.uncompressedSize.formatted(.byteCount(style: .file)))
+            AdaptiveValueRow("Format", value: model.archive?.formatName ?? "ZIP")
+            AdaptiveValueRow("Method", value: entry.methodName)
+            AdaptiveValueRow("Encrypted", value: entry.isEncrypted ? String(localized: "Yes") : String(localized: "No"))
+            if entry.hasCRC { AdaptiveValueRow("CRC-32", value: String(format: "%08X", entry.crc32)) }
             else { Text("Format integrity checks run during extraction.").foregroundStyle(.secondary) }
         }
         if let location = model.extractionLocation, model.exportedEntryPath == entry.path {
             Section("Export") {
                 Label("Extraction complete", systemImage: "checkmark.circle").accessibilityIdentifier("extractionReceipt")
-                LabeledContent("Saved folder", value: location).textSelection(.enabled)
+                AdaptiveValueRow("Saved folder", value: location).textSelection(.enabled)
                 Text("Open the destination in Files to view the extracted file.").foregroundStyle(.secondary)
             }
         }
@@ -232,10 +262,10 @@ struct TaskView: View {
     var body: some View {
         Form {
             Section("Status") {
-                if model.isBusy { ProgressView(model.status) }
-                else { Label(model.status, systemImage: "checkmark.circle") }
+                Text(model.status)
                 if model.isBusy { Button("Cancel", role: .cancel, action: model.cancel).accessibilityIdentifier("cancelTask") }
             }
+            PerformanceSection(model: model)
             if let location = model.extractionLocation {
                 Section("Export") { LabeledContent("Saved folder", value: location).textSelection(.enabled) }
             }
@@ -290,29 +320,37 @@ struct InformationView: View {
 }
 
 private struct CodecNoticesView: View {
+    @State private var paragraphs: [String] = []
     var body: some View {
         ScrollView {
             // A single 225 KiB Text exceeds practical rendering bounds on the
             // Duo beta. Keep the complete notices, but lay out lazy paragraphs.
             LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(notices.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
+                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
                     Text(verbatim: paragraph).font(.footnote).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }.padding()
         }.navigationTitle("Open-source notices")
-    }
-    private var notices: String {
-        guard let url = Bundle.main.url(forResource: "CodecNotices", withExtension: "txt"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return "Open-source notices are unavailable." }
-        return text
+        .overlay { if paragraphs.isEmpty { ProgressView() } }
+        .task {
+            guard paragraphs.isEmpty else { return }
+            let url = Bundle.main.url(forResource: "CodecNotices", withExtension: "txt")
+            let worker = Task.detached {
+                let text = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    ?? "Open-source notices are unavailable."
+                return text.components(separatedBy: "\n\n")
+            }
+            let loaded = await worker.value
+            if !Task.isCancelled { paragraphs = loaded }
+        }
     }
 }
 
 private struct DuoObservation: ViewModifier {
     @ObservedObject var model: WorkspaceModel
     @ViewBuilder func body(content: Content) -> some View {
-        #if DEBUG
+        #if DEBUG && DUO_SDK
         if #available(iOS 27.1, *) {
             content.onHingeChange { _, context in
                 // Observation is for debugging only; layout is driven by regions.

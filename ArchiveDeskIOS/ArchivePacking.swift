@@ -113,10 +113,10 @@ enum PackingInput {
                 var written: UInt64 = 0
                 while true {
                     try Task.checkCancellation()
-                    let data = try input.read(upToCount: 256 * 1024) ?? Data()
+                    let data = try autoreleasepool { try input.read(upToCount: 256 * 1024) ?? Data() }
                     if data.isEmpty { break }
                     guard UInt64(data.count) <= size - written else { throw ArchiveFailure.malformed("The source file changed while being copied.") }
-                    try target.write(contentsOf: data)
+                    try autoreleasepool { try target.write(contentsOf: data) }
                     written += UInt64(data.count)
                 }
                 guard written == size else { throw ArchiveFailure.malformed("The source file changed while being copied.") }
@@ -124,7 +124,7 @@ enum PackingInput {
                 items.append(PackingItem(url: output, path: path, size: size, isDirectory: false))
             }
         }
-        _ = try ArchiveSafety.validate(entries: items.map(\.entry), archiveBytes: 0)
+        _ = try ArchiveSafety.validate(entries: items.lazy.map(\.entry), archiveBytes: 0)
         return items
     }
 }
@@ -136,9 +136,9 @@ enum ArchivePacker {
         _ = try ArchiveSafety.safeRelativePath(name)
         let filename = name + "." + format.rawValue
         _ = try ArchiveSafety.safeRelativePath(filename)
-        let items = sources.flatMap(\.items)
+        let items = sources.lazy.flatMap(\.items)
         guard items.reduce(0, { $0 + $1.path.utf8.count }) <= 32 * 1024 * 1024 else { throw ArchiveFailure.capacity }
-        let total = try ArchiveSafety.validate(entries: items.map(\.entry), archiveBytes: 0)
+        let total = try ArchiveSafety.validate(entries: items.lazy.map(\.entry), archiveBytes: 0)
         try Task.checkCancellation()
         let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .volumeAvailableCapacityKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { throw DestinationFailure.invalidDirectory }
@@ -168,7 +168,7 @@ enum ArchivePacker {
         } else { try check(archive_write_set_format_pax_restricted(writer)) }
         try check(archive_write_open_fd(writer, fd))
         var processed: UInt64 = 0
-        var lastProgressTime = Date.timeIntervalSinceReferenceDate
+        var lastProgressTime = ProcessInfo.processInfo.systemUptime
         progress(0, total)
         for item in items {
             try Task.checkCancellation()
@@ -187,7 +187,7 @@ enum ArchivePacker {
                 var fileBytes: UInt64 = 0
                 while true {
                     try Task.checkCancellation()
-                    let data = try input.read(upToCount: 256 * 1024) ?? Data()
+                    let data = try autoreleasepool { try input.read(upToCount: 256 * 1024) ?? Data() }
                     if data.isEmpty { break }
                     guard UInt64(data.count) <= item.size - fileBytes else { throw ArchiveFailure.malformed("The packing snapshot changed.") }
                     try data.withUnsafeBytes { buffer in
@@ -200,7 +200,7 @@ enum ArchivePacker {
                         }
                     }
                     fileBytes += UInt64(data.count); processed += UInt64(data.count)
-                    let now = Date.timeIntervalSinceReferenceDate
+                    let now = ProcessInfo.processInfo.systemUptime
                     if now - lastProgressTime >= 0.1 {
                         progress(processed, total); lastProgressTime = now
                     }

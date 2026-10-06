@@ -6,13 +6,16 @@ enum ArchiveSafety {
     static let maximumComponents = 128
     static let maximumExpandedBytes: UInt64 = 256 * 1_024 * 1_024 * 1_024
 
-    static func validate(entries: [ArchiveEntry], archiveBytes: UInt64) throws -> UInt64 {
-        guard entries.count <= maximumEntries else { throw ArchiveFailure.malformed("The archive contains too many entries.") }
+    static func validate<S: Sequence>(entries: S, archiveBytes: UInt64) throws -> UInt64 where S.Element == ArchiveEntry {
         var normalized = Set<String>()
         var files = Set<String>()
         var components: [String: String] = [:]
         var total: UInt64 = 0
+        var count = 0
         for entry in entries {
+            try Task.checkCancellation()
+            count += 1
+            guard count <= maximumEntries else { throw ArchiveFailure.malformed("The archive contains too many entries.") }
             guard !entry.isLink else { throw ArchiveFailure.unsafePath(entry.path) }
             let key = try safeRelativePath(entry.path)
             guard normalized.insert(key).inserted else { throw ArchiveFailure.unsafePath(entry.path) }
@@ -30,6 +33,7 @@ enum ArchiveSafety {
             total += entry.uncompressedSize
         }
         for name in normalized {
+            try Task.checkCancellation()
             var prefix = (name as NSString).deletingLastPathComponent
             while !prefix.isEmpty {
                 guard !files.contains(prefix) else { throw ArchiveFailure.unsafePath(name) }

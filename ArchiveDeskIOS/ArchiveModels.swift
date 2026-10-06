@@ -67,17 +67,32 @@ struct BrowserItem: Identifiable, Hashable, Sendable {
 
 enum ArchiveBrowser {
     static func items(entries: [ArchiveEntry], navigation: ArchiveNavigation) -> [BrowserItem] {
-        let prefix = navigation.folder.isEmpty ? "" : navigation.folder + "/"
+        guard let rows = try? folderItems(entries: entries, folder: navigation.folder) else { return [] }
+        return (try? search(rows, query: navigation.search)) ?? []
+    }
+    static func folderItems(entries: [ArchiveEntry], folder: String) throws -> [BrowserItem] {
+        let prefix = folder.isEmpty ? "" : folder + "/"
         var items: [String: BrowserItem] = [:]
-        for entry in entries where entry.path.hasPrefix(prefix) {
+        for entry in entries {
+            try Task.checkCancellation()
+            guard entry.path.hasPrefix(prefix) else { continue }
             let suffix = entry.path.dropFirst(prefix.count)
             guard !suffix.isEmpty, let name = suffix.split(separator: "/").first else { continue }
             let directory = suffix.contains("/")
             let path = prefix + name
             items[path] = BrowserItem(path: path, name: String(name), isDirectory: directory, entry: directory ? nil : entry)
         }
-        return items.values.filter { navigation.search.isEmpty || $0.name.localizedStandardContains(navigation.search) }
-            .sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let sorted = items.values.sorted { $0.isDirectory != $1.isDirectory ? $0.isDirectory : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        try Task.checkCancellation()
+        return sorted
+    }
+    static func search(_ items: [BrowserItem], query: String) throws -> [BrowserItem] {
+        try Task.checkCancellation()
+        guard !query.isEmpty else { return items }
+        return try items.filter {
+            try Task.checkCancellation()
+            return $0.name.localizedStandardContains(query)
+        }
     }
 }
 

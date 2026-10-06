@@ -12,6 +12,37 @@ enum CoreVerification {
     }
 
     @MainActor static func main() async throws {
+        var meter = TransferMeter(now: 10)
+        let live = meter.sample(bytes: 100, total: 200, now: 11)
+        check(live.bytesPerSecond == 100 && live.fraction == 0.5, "Live transfer speed / fraction")
+        let verifying = meter.sample(bytes: 200, total: 200, now: 12)
+        check(verifying.fraction! < 1, "All bytes do not mean verified / committed")
+        let committed = meter.sample(bytes: 200, total: 200, now: 14, finished: true, succeeded: true)
+        check(committed.fraction == 1 && committed.bytesPerSecond == 50 && committed.seconds == 4, "Final average / commit")
+        var emptyMeter = TransferMeter(now: 0)
+        check(emptyMeter.sample(bytes: 0, total: 0, now: 0).fraction == nil, "Unknown / empty progress is indeterminate")
+        check(emptyMeter.sample(bytes: 0, total: 0, now: 1, finished: true, succeeded: true).fraction == 1, "Empty archive completion")
+        var stoppedMeter = TransferMeter(now: 1)
+        let stopped = stoppedMeter.sample(bytes: 50, total: 100, now: 0, finished: true)
+        check(stopped.bytesPerSecond == 0 && stopped.seconds == 0 && stopped.fraction == 0.5 && !stopped.succeeded, "Cancelled task / invalid time")
+        let mailbox = ProgressMailbox()
+        DispatchQueue.concurrentPerform(iterations: 1000) { index in mailbox.update(UInt64(index), UInt64(index * 2)) }
+        let sample = mailbox.read()
+        check(sample.bytes * 2 == sample.total, "Thread-safe bounded progress snapshot")
+        check(MemoryPolicy.shouldStop(headroom: 63 * 1024 * 1024) && !MemoryPolicy.shouldStop(headroom: nil), "Low memory / unknown budget")
+        check(!MemoryPolicy.allowsNewWork(headroom: 128 * 1024 * 1024) && MemoryPolicy.allowsNewWork(headroom: nil), "New task / preview memory policy")
+        check(!MemoryPolicy.shouldStop(headroom: 64 * 1024 * 1024) && MemoryPolicy.allowsNewWork(headroom: 192 * 1024 * 1024),
+              "Memory threshold boundaries")
+        var sampler = ProcessSampler()
+        let baseline = sampler.sample()
+        check(baseline.cpuPercent == nil && (baseline.memoryBytes ?? 0) > 0, "First process CPU sample / footprint")
+        let burn = Data(repeating: 0x6a, count: 256 * 1024)
+        let until = ProcessInfo.processInfo.systemUptime + 0.2
+        var checksum: UInt32 = 0
+        while ProcessInfo.processInfo.systemUptime < until { checksum ^= CRC32.checksum(burn) }
+        let active = sampler.sample()
+        check((active.cpuPercent ?? 0) > 10 && active.cpuPercent!.isFinite, "Process CPU measures real work")
+        _ = checksum
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-Tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -34,7 +65,9 @@ enum CoreVerification {
         let archive = try open(fixture)
         check(archive.entries.count == 3, "Index count")
         check(try archive.previewText(archive.entries[0]) == "ArchiveDesk\n", "Verified preview")
-        let output = try archive.extract(outputRoot: root)
+        let extractedProgress = ProgressMailbox()
+        let output = try archive.extract(outputRoot: root, progress: { extractedProgress.update($0, $1) })
+        check(extractedProgress.read().bytes == archive.entries.reduce(0) { $0 + $1.uncompressedSize }, "Stored ZIP output byte progress")
         check(try Data(contentsOf: output.appendingPathComponent("Folder/Readme.txt")) == text, "Preserved filename case")
         check(FileManager.default.fileExists(atPath: output.appendingPathComponent("empty.bin").path), "Zero byte output")
 
@@ -86,6 +119,9 @@ enum CoreVerification {
 
         let rootItems = ArchiveBrowser.items(entries: archive.entries, navigation: ArchiveNavigation())
         check(rootItems.map(\.name) == ["Folder", "empty.bin"], "Implicit folder browsing")
+        check(try ArchiveBrowser.search(rootItems, query: "EMPTY").map(\.name) == ["empty.bin"], "Cached rows case-insensitive search")
+        check(try ArchiveBrowser.search(rootItems, query: "missing").isEmpty, "Empty search results")
+        check(try ArchiveBrowser.search(rootItems, query: "").map(\.id) == rootItems.map(\.id), "Empty search preserves row identity")
         var navigation = ArchiveNavigation()
         navigation.enter("Folder")
         check(ArchiveBrowser.items(entries: archive.entries, navigation: navigation).count == 2, "Nested browsing")
@@ -195,15 +231,38 @@ enum CoreVerification {
         model.importArchive(archive.url, alreadyPrivate: true)
         for _ in 0..<400 where model.isBusy { try await Task.sleep(for: .milliseconds(5)) }
         check(model.archive != nil && !model.isBusy, "Workspace import completes")
+        for _ in 0..<400 where model.isListing { try await Task.sleep(for: .milliseconds(5)) }
+        check(model.browserItems.map(\.name) == ["Folder", "empty.bin"], "Async root listing")
+        model.navigation.search = "Folder"; model.navigation.search = "empty"
+        for _ in 0..<400 where model.isListing { try await Task.sleep(for: .milliseconds(5)) }
+        check(model.browserItems.map(\.name) == ["empty.bin"], "Latest debounced search wins")
+        model.navigation.search = ""
+        for _ in 0..<400 where model.isListing { try await Task.sleep(for: .milliseconds(5)) }
+        check(model.browserItems.count == 2, "Cached unfiltered rows restored")
         model.enterFolder("Folder"); model.select("Folder/Readme.txt")
         for _ in 0..<400 where model.previewText == nil { try await Task.sleep(for: .milliseconds(5)) }
         let retained = model.navigation
+        for _ in 0..<400 where model.isListing { try await Task.sleep(for: .milliseconds(5)) }
+        check(model.selectedEntry?.path == "Folder/Readme.txt" && model.browserItems.count == 2 && !model.isListing,
+              "Selection uses cached detail without rebuilding folder")
         for dimensions in [(382.0, 644.0), (669, 951), (951, 669), (400, 700)] {
             model.diagnostics = LayoutDiagnostics(width: dimensions.0, height: dimensions.1, divisionCount: 1)
             model.hingeStatus = "Partially open"
             check(model.navigation == retained && model.previewText == "ArchiveDesk\n", "Layout keeps selection and preview")
         }
-        print("PASS: \(checks) archive, streaming, cancellation, Unicode, ZIP64 and workspace checks")
+        model.extractSelected()
+        check(model.previewText == "ArchiveDesk\n", "Starting extraction retains the bounded preview result")
+        model.handleMemoryPressure()
+        for _ in 0..<400 where model.isBusy { try await Task.sleep(for: .milliseconds(5)) }
+        check(!model.isBusy && model.transferMetrics?.finished == true && model.transferMetrics?.succeeded == false,
+              "Memory-pressure cancellation does not publish success")
+        check(model.errorMessage != nil && model.exportedURL == nil && model.previewText == nil, "Memory-pressure explanation / release preview / no output receipt")
+        model.errorMessage = nil
+        model.importArchive(archive.url, alreadyPrivate: true)
+        for _ in 0..<400 where model.isBusy { try await Task.sleep(for: .milliseconds(5)) }
+        check(model.archive != nil && !model.isBusy && model.errorMessage == nil && model.transferMetrics == nil,
+              "A fresh task clears memory cancellation and old metrics")
+        print("PASS: \(checks) archive, metrics, streaming, cancellation, Unicode, ZIP64 and workspace checks")
     }
 }
 

@@ -21,22 +21,27 @@ struct PackingView: View {
                 }.onDelete(perform: model.removePackingSources)
             }
             Section("Archive options") {
-                TextField("Archive name", text: $model.packingName).accessibilityIdentifier("packingName")
+                TextField("Archive name", text: $model.packingName)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .accessibilityIdentifier("packingName")
                 Picker("Format", selection: $model.packingFormat) {
                     Text("ZIP").tag(PackingFormat.zip)
                     Text("TAR").tag(PackingFormat.tar)
                 }.pickerStyle(.segmented).accessibilityIdentifier("packingFormat")
                 Text("ZIP uses Deflate. TAR is uncompressed. Password creation and RAR creation are not available.").font(.footnote).foregroundStyle(.secondary)
-                Button("Create archive") { destinationChoice = true }
+                Button { destinationChoice = true } label: {
+                    Label("Create archive", image: ArchiveActionIcon.create)
+                }
                     .disabled(model.isBusy || model.packingSources.isEmpty || model.packingName.isEmpty)
                     .accessibilityIdentifier("createArchive")
             }.disabled(model.isBusy)
             if model.isBusy {
                 Section("Status") {
-                    ProgressView(model.status, value: model.packingProgress)
+                    Text(model.status)
                     Button("Cancel", role: .cancel, action: model.cancel)
                 }
             }
+            PerformanceSection(model: model)
             if let receipt = model.packingReceipt {
                 Section("Export") {
                     Label("Archive created", systemImage: "checkmark.circle").accessibilityIdentifier("packingReceipt")

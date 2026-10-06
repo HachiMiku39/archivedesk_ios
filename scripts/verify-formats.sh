@@ -10,7 +10,7 @@ mkdir -p work/bin work/ModuleCache
   -module-cache-path work/ModuleCache -I "$task_codecs/Headers" -L "$task_codecs" \
   -lArchiveCodecs -lz -lbz2 -liconv \
   -I "$PWD/Vendor/RARSupport" -L "$task_rar" -lArchiveRar -lc++ \
-  ArchiveDeskIOS/ArchiveModels.swift ArchiveDeskIOS/ArchiveSafety.swift \
+  ArchiveDeskIOS/ArchiveModels.swift ArchiveDeskIOS/ArchiveSafety.swift ArchiveDeskIOS/OperationMetrics.swift \
   ArchiveDeskIOS/CRC32.swift ArchiveDeskIOS/ZIPArchive.swift \
   ArchiveDeskIOS/ArchiveContainer.swift ArchiveDeskIOS/MultiFormatArchive.swift ArchiveDeskIOS/RARArchive.swift \
   ArchiveDeskIOS/CoordinatedFileAccess.swift ArchiveDeskIOS/ExtractionDestination.swift \

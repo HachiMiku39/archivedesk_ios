@@ -11,10 +11,10 @@ task_sdk=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
   -module-cache-path work/ModuleCache \
   -I "$task_codecs/Headers" -L "$task_codecs" -lArchiveCodecs -lz -lbz2 -liconv \
   -I "$PWD/Vendor/RARSupport" -L "$task_rar" -lArchiveRar -lc++ \
-  ArchiveDeskIOS/ArchiveModels.swift ArchiveDeskIOS/ArchiveSafety.swift \
+  ArchiveDeskIOS/ArchiveModels.swift ArchiveDeskIOS/ArchiveSafety.swift ArchiveDeskIOS/OperationMetrics.swift \
   ArchiveDeskIOS/CRC32.swift ArchiveDeskIOS/ZIPArchive.swift \
   ArchiveDeskIOS/ArchiveContainer.swift ArchiveDeskIOS/MultiFormatArchive.swift ArchiveDeskIOS/RARArchive.swift \
   ArchiveDeskIOS/CoordinatedFileAccess.swift ArchiveDeskIOS/ExtractionDestination.swift ArchiveDeskIOS/ArchivePacking.swift ArchiveDeskIOS/WorkspaceModel.swift \
-  ArchiveDeskIOS/DebugArchiveFixture.swift Tests/CoreVerification.swift \
+  ArchiveDeskIOS/DebugArchiveFixture.swift ArchiveDeskIOS/PerformanceModel.swift Tests/CoreVerification.swift \
   -o work/bin/core-verification
 work/bin/core-verification

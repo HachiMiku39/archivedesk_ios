@@ -47,8 +47,8 @@ limits do not cover C++ new allocations or the whole app's resident memory.
 
 ## Corresponding binary release and relink kit
 
-Release `v0.2.0-beta.1` distributes the unsigned device IPA alongside
-`ArchiveDesk-0.2.0-source.tar.gz` and `ArchiveDesk-0.2.0-relink-kit.tar.gz`.
+Release `v0.3.0-beta.1` distributes the unsigned device IPA alongside
+`ArchiveDesk-0.3.0-source.tar.gz` and `ArchiveDesk-0.3.0-relink-kit.tar.gz`.
 The old v0.1.0-beta.1 IPA predates this backend and remains unchanged.
 
 The matching kit includes the exact arm64 Release application objects in original

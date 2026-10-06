@@ -86,4 +86,16 @@
 "The RAR archive could not be read safely." = "无法安全读取此 RAR 文件。";
 "Password-protected RAR4 / RAR5" = "密码 RAR4 / RAR5";
 "ZIP / TAR creation" = "ZIP / TAR 创建";
+"Performance" = "性能";
+"App CPU" = "应用 CPU 占用";
+"App RAM" = "应用 RAM 占用";
+"App memory headroom" = "应用剩余内存额度";
+"Progress" = "进度";
+"Speed" = "实时速度";
+"Average speed" = "平均速度";
+"Processed" = "已处理";
+"Elapsed" = "用时";
+"CPU: 100% is one core. RAM is this app's footprint, not device-wide usage. Speed counts uncompressed input when creating and output when extracting. Verification and solid decoding may pause progress." = "CPU 100% 表示一个核心；RAM 为本应用实际占用，并非全设备占用。速度按打包时读取的原始数据、解压时写出的数据计算。校验及 solid 解码期间进度可能停留。";
+"Stopped to protect app memory. Temporary output was rolled back. Try a smaller selection or an archive with a smaller dictionary." = "为保护应用内存，任务已停止，本次临时输出已回滚。请减少选中内容，或尝试使用较小字典的压缩包。";
 "RAR supports password extraction, including tested solid and encrypted-header archives. Multi-volume archives, encrypted ZIP / 7z and encrypted creation are not available. RAR creation is never offered." = "RAR 支持密码解压，已测试 solid 和加密目录样本。暂不支持分卷、加密 ZIP / 7z 和加密创建；不提供 RAR 创建。";
+"Loading folder…" = "正在加载目录…";

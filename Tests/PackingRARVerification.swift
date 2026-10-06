@@ -19,10 +19,14 @@ enum PackingRARVerification {
             try? FileManager.default.removeItem(at: second.snapshotDirectory)
         }
         for format in PackingFormat.allCases {
-            let packed = try ArchivePacker.create(sources: [first, second], format: format, name: "Mixed", in: root)
+            let packProgress = ProgressMailbox(), extractProgress = ProgressMailbox()
+            let packed = try ArchivePacker.create(sources: [first, second], format: format, name: "Mixed", in: root,
+                                                 progress: { packProgress.update($0, $1) })
+            precondition(packProgress.read().bytes == first.bytes + second.bytes && packProgress.read().total == first.bytes + second.bytes)
             let archive = try ArchiveContainer.open(url: packed)
             precondition(archive.entries.contains { $0.path == "SourceA/空文件夹/" })
-            let dest = try archive.extract(outputRoot: root)
+            let dest = try archive.extract(outputRoot: root, progress: { extractProgress.update($0, $1) })
+            precondition(extractProgress.read().bytes == first.bytes + second.bytes)
             let firstBytes = try Data(contentsOf: dest.appendingPathComponent("SourceA/中文.txt"))
             let otherBytes = try Data(contentsOf: dest.appendingPathComponent("other.txt"))
             precondition(firstBytes == Data("first source 日本語\n".utf8))
@@ -82,7 +86,11 @@ enum PackingRARVerification {
                 let b = archive.entries.first { $0.path == "b.txt" }!
                 let preview = try archive.previewText(b, password: "password")
                 precondition(preview == "This is from b.txt")
-                let output = try archive.extract(paths: ["b.txt"], outputRoot: root, password: "password")
+                let rarProgress = ProgressMailbox()
+                let output = try archive.extract(paths: ["b.txt"], outputRoot: root, password: "password",
+                                                 progress: { rarProgress.update($0, $1) })
+                precondition(rarProgress.read().bytes == b.uncompressedSize && rarProgress.read().total == b.uncompressedSize,
+                             "RAR progress must not count preceding solid members")
                 let extracted = try Data(contentsOf: output.appendingPathComponent("b.txt"))
                 precondition(extracted == Data("This is from b.txt".utf8))
                 let before = try FileManager.default.contentsOfDirectory(atPath: root.path)

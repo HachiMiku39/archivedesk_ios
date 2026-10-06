@@ -86,4 +86,16 @@
 "The RAR archive could not be read safely." = "RAR を安全に読み取れませんでした。";
 "Password-protected RAR4 / RAR5" = "パスワード付き RAR4 / RAR5";
 "ZIP / TAR creation" = "ZIP / TAR 作成";
+"Performance" = "パフォーマンス";
+"App CPU" = "アプリ CPU 使用率";
+"App RAM" = "アプリ RAM 使用量";
+"App memory headroom" = "アプリの残りメモリ枠";
+"Progress" = "進捗";
+"Speed" = "現在の速度";
+"Average speed" = "平均速度";
+"Processed" = "処理済み";
+"Elapsed" = "経過時間";
+"CPU: 100% is one core. RAM is this app's footprint, not device-wide usage. Speed counts uncompressed input when creating and output when extracting. Verification and solid decoding may pause progress." = "CPU 100% は1コア分です。RAM はアプリ自身の使用量です。速度は作成時の入力、展開時の出力で計算します。検証やソリッド解凍中は進捗が止まる場合があります。";
+"Stopped to protect app memory. Temporary output was rolled back. Try a smaller selection or an archive with a smaller dictionary." = "メモリを保護するため停止し、一時出力を削除しました。選択項目を減らすか、辞書サイズの小さい書庫をお試しください。";
 "RAR supports password extraction, including tested solid and encrypted-header archives. Multi-volume archives, encrypted ZIP / 7z and encrypted creation are not available. RAR creation is never offered." = "RAR のパスワード展開に対応し、ソリッドと暗号化ヘッダーのサンプルを検証済みです。分割、暗号化 ZIP / 7z、暗号化作成は未対応です。RAR 作成は提供しません。";
+"Loading folder…" = "フォルダを読み込み中…";

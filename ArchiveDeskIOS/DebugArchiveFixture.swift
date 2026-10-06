@@ -61,6 +61,26 @@ enum DebugArchiveFixture {
     static func packingSources() throws -> [URL] {
         let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("PackingFixtures", isDirectory: true)
+        if ProcessInfo.processInfo.arguments.contains("--performance-fixture") {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let file = root.appendingPathComponent("Performance.bin")
+            FileManager.default.createFile(atPath: file.path, contents: nil)
+            let output = try FileHandle(forWritingTo: file)
+            defer { try? output.close() }
+            try output.truncate(atOffset: 0)
+            var block = Data(count: 256 * 1024)
+            var seed: UInt32 = 0x12345678
+            block.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
+                for index in bytes.indices {
+                    seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5
+                    bytes[index] = UInt8(truncatingIfNeeded: seed)
+                }
+            }
+            // 128 MiB incompressible input, generated with a 256 KiB buffer.
+            for _ in 0..<512 { try output.write(contentsOf: block) }
+            try output.synchronize()
+            return [file]
+        }
         let folder = root.appendingPathComponent("SourceA", isDirectory: true)
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("Empty"), withIntermediateDirectories: true)
         try Data("first source 日本語".utf8).write(to: folder.appendingPathComponent("中文.txt"))

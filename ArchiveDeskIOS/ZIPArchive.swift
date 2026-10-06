@@ -15,7 +15,7 @@ private final class ZIPReader {
       throw ArchiveFailure.malformed("A ZIP record is outside the file.")
     }
     try handle.seek(toOffset: offset)
-    let data = try handle.read(upToCount: count) ?? Data()
+    let data = try autoreleasepool { try handle.read(upToCount: count) ?? Data() }
     guard data.count == count else { throw ArchiveFailure.malformed("A ZIP record is truncated.") }
     return data
   }
@@ -198,7 +198,8 @@ struct ZIPArchive: Sendable {
 
   /// Use a fresh owned staging folder, then rename after all CRCs are verified.
   /// External callers must hold security scope and coordinate the destination.
-  func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true) throws
+  func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true,
+               progress: @escaping ArchiveProgress = { _, _ in }) throws
     -> URL
   {
     let selected = entries.filter { paths == nil || paths!.contains($0.path) }
@@ -207,6 +208,7 @@ struct ZIPArchive: Sendable {
         "The selection contains encrypted or unsupported ZIP entries.")
     }
     let total = try ArchiveSafety.validate(entries: selected, archiveBytes: 0)
+    let meter = ExtractionProgress(total: total, callback: progress)
     try Task.checkCancellation()
     if createOutputRoot {
       try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
@@ -247,7 +249,9 @@ struct ZIPArchive: Sendable {
         let handle = try FileHandle(forWritingTo: output)
         do {
           if entry.compressionMethod == 8 {
-            try NativeArchiveReader.stream(entry, from: url) { try handle.write(contentsOf: $0) }
+            try NativeArchiveReader.stream(entry, from: url) {
+              try handle.write(contentsOf: $0); meter.advance($0.count)
+            }
             try handle.synchronize()
             try handle.close()
             continue
@@ -258,7 +262,8 @@ struct ZIPArchive: Sendable {
             try Task.checkCancellation()
             let chunk = try reader.read(at: offset, count: Int(min(remaining, 256 * 1_024)))
             crc = chunk.withUnsafeBytes { CRC32.update(crc, bytes: $0) }
-            try handle.write(contentsOf: chunk)
+            try autoreleasepool { try handle.write(contentsOf: chunk) }
+            meter.advance(chunk.count)
             offset += UInt64(chunk.count)
             remaining -= UInt64(chunk.count)
           }
@@ -274,6 +279,7 @@ struct ZIPArchive: Sendable {
       let final = outputRoot.appendingPathComponent(
         "Extracted-\(UUID().uuidString)", isDirectory: true)
       try FileManager.default.moveItem(at: staging, to: final)
+      meter.complete()
       return final
     } catch {
       let originalError = error

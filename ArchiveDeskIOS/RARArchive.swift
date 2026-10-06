@@ -43,7 +43,7 @@ private func rarWrite(_ context: UnsafeMutableRawPointer?, _ bytes: UnsafeRawPoi
     let output = Unmanaged<RAROutput>.fromOpaque(context).takeUnretainedValue()
     do {
         try Task.checkCancellation()
-        try output.body(Data(bytes: bytes, count: count))
+        try autoreleasepool { try output.body(Data(bytes: bytes, count: count)) }
         return 0
     } catch { output.error = error; return 1 }
 }
@@ -121,11 +121,13 @@ struct RARArchive: Sendable {
         try reader.stream(entry, password: password) { bytes.append($0) }
         return String(data: bytes, encoding: .utf8)
     }
-    func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil) throws -> URL {
+    func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
+                 progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
         let selected = entries.filter { paths == nil || paths!.contains($0.path) }
         guard !selected.isEmpty, selected.allSatisfy(\.isExtractable) else { throw RARFailure.unsupported }
         if selected.contains(where: requiresPassword), password == nil { throw RARFailure.passwordRequired }
         let total = try ArchiveSafety.validate(entries: selected, archiveBytes: 0)
+        let meter = ExtractionProgress(total: total, callback: progress)
         try Task.checkCancellation()
         if createOutputRoot { try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true) }
         let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .volumeAvailableCapacityKey])
@@ -145,13 +147,16 @@ struct RARArchive: Sendable {
                     let target = try FileHandle(forWritingTo: file)
                     defer { try? target.close() }
                     let reader = try RARReader(url: url, password: password)
-                    try reader.stream(entry, password: password) { try target.write(contentsOf: $0) }
+                    try reader.stream(entry, password: password) {
+                        try target.write(contentsOf: $0); meter.advance($0.count)
+                    }
                     try target.synchronize(); try target.close()
                 }
             }
             try Task.checkCancellation()
             let final = outputRoot.appendingPathComponent("Extracted-\(UUID())", isDirectory: true)
             try FileManager.default.moveItem(at: stage, to: final)
+            meter.complete()
             return final
         } catch {
             let original = error

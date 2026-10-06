@@ -30,11 +30,12 @@ enum ArchiveContainer: Sendable {
     func previewText(_ entry: ArchiveEntry, password: String? = nil) throws -> String? {
         switch self { case .zip(let a): try a.previewText(entry); case .native(let a): try a.previewText(entry); case .rar(let a): try a.previewText(entry, password: password) }
     }
-    func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil) throws -> URL {
+    func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
+                 progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
         switch self {
-        case .zip(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot)
-        case .native(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot)
-        case .rar(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, password: password)
+        case .zip(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress)
+        case .native(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress)
+        case .rar(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, password: password, progress: progress)
         }
     }
 }

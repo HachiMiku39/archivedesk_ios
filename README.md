@@ -2,21 +2,21 @@
 
 ArchiveDesk 是面向 iPhone、iPad 和 iPhone Duo 自适应界面的压缩包浏览与安全解压工具。采用 SwiftUI 和进程内原生解码引擎，不依赖桌面版 7-Zip 命令行程序。
 
-当前版本：**0.2.0 Beta 1（build 2）**。最低系统：**iOS / iPadOS 26.0**。Duo 的新布局使用 iOS 27.1+ API，旧系统保留兼容布局。
+当前版本：**0.3.0 Beta 1（build 3）**。最低系统：**iOS / iPadOS 26.0**。Duo 的专用布局由 27.1 SDK 构建；其他 SDK 使用标准自适应布局。
 
 <img src="ArchiveDeskIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" alt="ArchiveDesk icon">
 
 ## 下载与安装
 
-在 [v0.2.0-beta.1](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.2.0-beta.1) 下载 `ArchiveDesk-0.2.0-unsigned.ipa`。
+在 [v0.3.0-beta.1](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.3.0-beta.1) 下载 `ArchiveDesk-0.3.0-unsigned.ipa`。
 
-**新版 IPA 已包含多来源 ZIP/TAR 打包及密码 RAR 解压。** 同一 Release 附带完整的对应源码包 `ArchiveDesk-0.2.0-source.tar.gz`、匹配的静态链接重链接材料 `ArchiveDesk-0.2.0-relink-kit.tar.gz` 和 SHA-256 校验清单。旧版 v0.1.0-beta.1 保留，不含这些新功能。
+**新版增加 CPU/RAM、压缩/解压速度与进度，区分闭箱/开箱操作图标，并优化大目录搜索与小窗口、大字体布局。** 多来源 ZIP/TAR 打包及密码 RAR 解压继续保留。同一 Release 附带完整对应源码 `ArchiveDesk-0.3.0-source.tar.gz`、匹配静态重链接材料 `ArchiveDesk-0.3.0-relink-kit.tar.gz` 和 SHA-256 校验清单。旧 Release 保留。
 
 **这是未签名的 arm64 真机 IPA，不是模拟器包，不能直接安装。** 安装前必须使用自己的有效 Apple 签名证书及描述文件重新签名。也可以在 Xcode 中选择自己的 Team、调整 Bundle Identifier 后运行到设备。此发布不是 App Store / TestFlight 发行版，不承诺第三方重签工具的兼容性。
 
-本版真机 Release 使用 Xcode 27.1 beta（27A9269）/ iOS 27.1 SDK（24A94403）构建，最低系统仍为 26.0。本轮只使用一台 Duo（iOS 27.1）模拟器。真机签名安装与外置设备验证尚未完成。
+本版真机 Release 使用 Xcode 27.1 beta（27A9269）/ iOS 27.1 SDK（24A94403）构建，最低系统仍为 26.0。普通 iPhone/iPad 按实际窗口宽度和字号适配；27.2 SDK 通用分支亦独立构建验证。普通设备的本地运行时挂载缓存故障已恢复，Duo、iPhone 17e（27.2）、iPad Pro 11-inch M5（27.2）各完成三项适配 UI 回归，均零失败、零跳过。真机签名安装、iPad 窄窗口及外置设备验证尚未完成；详细结果见优化记录。
 
-IPA SHA-256：`96eb24c66bec9d5fdd07c01f18e5066fddc7c26e265ee236000090710e02ea6d`。
+IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.0-SHA256SUMS.txt`。
 
 ## 已实现的功能
 
@@ -28,6 +28,9 @@ IPA SHA-256：`96eb24c66bec9d5fdd07c01f18e5066fddc7c26e265ee236000090710e02ea6d`
 - RAR4/RAR5 密码解压；已验证普通加密、加密文件名、solid、solid 加密文件名的 8 种上游样本。打开加密目录、预览和解压分别输入密码，不保存密码。
 - 支持中文、日文及 UTF-8 文件名；ZIP 未标记 UTF-8 的文件名采用 CP437 默认规则。
 - iPhone / iPad 的紧凑和宽屏布局；Duo 折叠布局、内外屏切换和旋转时保留选中项及预览状态。
+- 按实际详情区宽度排版，窄窗口及辅助功能大字体使用可滚动单列；直接显示解压操作，支持 ⌘O 打开、⌘E 解压。
+- 目录索引/排序在后台计算并缓存当前目录；搜索去抖 200 ms，取消旧结果，选中项和性能采样不重复扫描整个压缩包。
+- 应用 CPU/RAM、已处理字节、进度、实时/完成后平均速度；低内存保护与有界分块流式处理。
 - 英文、简体中文、日文主界面；部分引擎错误和开发诊断仍为英文。
 - 应用内展示第三方组件许可；公开版本使用原创中性压缩箱图标。
 
@@ -63,6 +66,16 @@ IPA SHA-256：`96eb24c66bec9d5fdd07c01f18e5066fddc7c26e265ee236000090710e02ea6d`
 
 **并非所有“文件”App 显示的可写位置都已支持。** 无法可靠区分本地提供商和第三方云缓存时，应用采用只读策略。外置卷权限、拔盘异常、只读介质及真实 iCloud 同步仍需物理设备验证。详见 [存储访问说明](docs/STORAGE-ACCESS.md)。
 
+## iOS 性能面板与内存保护
+
+文件详情、创建压缩包和任务页新增应用进程 CPU、RAM、压缩／解压字节进度、速度与用时。CPU 100% 表示一个核心（多核心可超过 100%）；RAM 使用 Mach `phys_footprint`，不是设备总内存或全系统占用。前台约每秒采样一次，仅刷新性能面板；进入后台停止采样并取消任务。
+
+压缩速度按读取的未压缩输入计算，解压按实际写出的输出计算；运行时显示采样区间速度，结束显示全任务平均速度。校验、flush、重命名完成前不显示 100%；未知／空内容采用不定进度。Solid 格式内部跳过、文件协调及校验期间可能没有新输出，速度和进度会停留。已处理字节不代表失败任务保留了输出。
+
+I/O 保持 256 KiB 分块，加入分块 autorelease pool；批量打包和来源校验使用惰性元数据遍历，减少完整临时数组，路径冲突检测和条目上限不变。监控使用固定大小的线程安全进度快照，不为每个数据块排队 UI 更新。前台重任务先取消并等待文本预览解码器结束，预览之间也串行交接，避免多个字典解码器叠加占用。
+
+真机参考 `os_proc_available_memory()` 返回的应用当前剩余额度，而非设备物理 RAM：低于 192 MiB 时不启动新任务或预览，为解码字典及框架留余量；低于 64 MiB 或收到系统内存告警时取消当前任务、释放预览，并按既有规则回滚本次临时输出。额度随系统状态变化，这些保守阈值不是内存预留，采样和协作式取消不能保证避免 jetsam；模拟器不显示这项真机额度。现有解码器分配／字典限制仍然保留，未申请扩大内存额度的 entitlement。8–12 GB 等设备总 RAM 不等于应用可使用的内存。
+
 ## 安全与任务行为
 
 - 校验路径穿越、绝对路径、链接、Unicode/大小写冲突及目录冲突。
@@ -78,7 +91,7 @@ IPA SHA-256：`96eb24c66bec9d5fdd07c01f18e5066fddc7c26e265ee236000090710e02ea6d`
 
 用具备对应 SDK 的 Xcode 打开 `ArchiveDeskIOS.xcodeproj`，选择 `ArchiveDeskIOS` scheme。Duo 调试使用 `ArchiveDeskIOS-DuoDebug`。
 
-**复现本次 0.2.0 IPA 建议下载 Release 中明确命名的 `ArchiveDesk-0.2.0-source.tar.gz`。** 它是完整对应项目，含新功能、依赖与发布说明，并与重链接材料配套。仓库也已同步新版源码；GitHub 自动生成的 “Source code (zip/tar.gz)” 是发布标签对应的仓库快照。
+**复现本次 IPA 建议下载 Release 中明确命名的 `ArchiveDesk-0.3.0-source.tar.gz`。** 它是完整对应项目，含新功能、依赖与发布说明，并与重链接材料配套。GitHub 自动生成的 “Source code (zip/tar.gz)” 是发布标签对应的仓库快照。
 
 仓库附带 XCFramework 和校验过的上游源码压缩包。编译应用不需要安装桌面 7-Zip。未签名 Release 示例：
 
@@ -87,7 +100,7 @@ export DEVELOPER_DIR=/Applications/Xcode-27.1-beta.app/Contents/Developer
 zsh scripts/build-ios.sh iphoneos Release
 zsh scripts/package-unsigned-ipa.sh \
   "$PWD/work/Build-iphoneos-Release/Build/Products/Release-iphoneos/ArchiveDeskIOS.app" \
-  "$PWD/outputs/ArchiveDesk-0.2.0-unsigned.ipa"
+  "$PWD/outputs/ArchiveDesk-0.3.0-unsigned.ipa"
 ```
 
 若本地路径不同，调整 `DEVELOPER_DIR`。受限执行环境可能阻止 SwiftUI 宏插件或模拟器服务，请使用原生 Xcode 构建。签名分发请在 Xcode 选择自己的 Team，并按自己的描述文件与分发方式 Archive / Export。
@@ -110,7 +123,9 @@ zsh scripts/verify-packing-rar.sh
 
 2026-10-04 已完成：核心回归 55 项通过、2 项明确的桌面协调跳过；15 种普通格式样本及 CP437、恶意路径、损坏回滚、取消清理等检查；ZIP/TAR 多来源逐字节往返、1,500 文件 ZIP、打包取消/失败回滚和 8 种密码 RAR 样本通过。Duo 原生 UI 扩展套件 11/11 通过；移除上游 RAR5 全局密码缓存后，4 项重点 UI 回归再次通过。Release 模拟器与本次未签名真机 Release 构建通过。这轮只使用 Duo 一台模拟器。用户确认 Duo 外屏 0°、90°、270° 自动旋转正常。
 
-这些结果不能替代物理设备、文件提供商、内存压力、后台期限和无障碍测试。详见 [Duo 调试记录](docs/DUO-DEBUG.md)。
+2026-10-06 的 0.3.0 核心回归 79 项通过，2 项桌面文件协调明确跳过；普通格式、恶意输入、损坏回滚、多来源 ZIP/TAR、1,500 文件和 8 种密码 RAR 回归通过。新增异步目录缓存、最新查询优先及大字体适配检查。验证边界、苹果文档依据及后续优先级见 [0.3.0 优化记录](docs/OPTIMIZATION-0.3.0.md)。
+
+这些结果不能替代物理设备、文件提供商、内存压力、后台期限和完整无障碍测试。详见 [Duo 调试记录](docs/DUO-DEBUG.md)。
 
 ## 组件与许可
 
@@ -122,4 +137,4 @@ RAR 后端包含 LGPL-2.1-or-later 与 unRAR 附加限制；Release 同时提供
 
 ## English summary
 
-ArchiveDesk 0.2.0 Beta 1 is a SwiftUI archive browser, safe extractor and multi-source ZIP/TAR packer for iOS/iPadOS 26+. The unsigned device IPA includes password-protected RAR4/RAR5 extraction through a source-built 7-Zip read-only backend. No RAR creation, encrypted creation or split-volume workflow is offered. Verified iCloud/external destinations may be writable; third-party cloud providers remain read-only. Re-sign before installation. The same Release provides corresponding full source, matching arm64 app objects, LGPL relinking instructions and checksums. Physical-device and external-provider testing is still pending.
+ArchiveDesk 0.3.0 Beta 1 is a SwiftUI archive browser, safe extractor and multi-source ZIP/TAR packer for iOS/iPadOS 26+. This beta adds app CPU/RAM, transfer metrics, separate open/closed box icons, cached asynchronous directory search and width/Dynamic Type adaptive details. It preserves password-protected RAR4/RAR5 extraction through a source-built 7-Zip read-only backend. No RAR creation, encrypted creation or split-volume workflow is offered. Verified iCloud/external destinations may be writable; third-party cloud providers remain read-only. Re-sign the unsigned IPA before installation. The Release provides corresponding full source, matching arm64 app objects, LGPL relinking instructions and checksums. Duo, iPhone 17e and iPad Pro 11-inch (M5) each passed 3 adaptation UI tests with no skips. See the optimization record for per-device results and remaining physical-device, narrow-window and external-provider checks.

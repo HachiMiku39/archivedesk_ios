@@ -1,10 +1,22 @@
 # iPhone Duo debug guide
 
-Updated 2026-10-04 (Asia/Shanghai). Xcode 27.2 beta 2, build 27B5028f. Deployment target remains 26.0, device family 1 and 2.
+Updated 2026-10-06 (Asia/Shanghai). Duo-specific validation uses Xcode 27.1 beta (27A9269); the Xcode 27.2 beta 2 (27B5028f) standard-layout branch was separately built and tested on the same Duo runtime. Deployment target remains 26.0, device family 1 and 2. See [0.3.0 optimization record](OPTIMIZATION-0.3.0.md) for the latest ordinary iPhone/iPad results and Apple documentation.
 
 User verification on 2026-10-04 confirms the Duo outer display rotates correctly at 0°, 90° and 270°. This supersedes the current product-level rotation concern; the historical XCTest window-axis assertion failure remains recorded below as a test-driver discrepancy, not an unresolved user-observed rendering failure. No new automated pass is inferred from this report.
 
 ## Implemented
+
+### 2026-10-06: process metrics and iOS memory protection (0.3.0 Beta 1)
+
+Added per-app CPU / physical memory footprint, extraction and packing byte progress, interval throughput, final average throughput and elapsed time. CPU 100% means one core. ZIP Stored/Deflate, native formats and the password RAR backend report output bytes; packing reports original input bytes. A successful checksum/flush/commit is required for 100%. Metrics use a bounded mailbox and a foreground 1-second sampler; the small metrics model is separate from the archive browser's observable state.
+
+Memory work: 256 KiB I/O with autorelease pools, lazy packing metadata validation (unchanged collision/entry limits), and cancellation plus draining of the previous preview decoder before another preview or foreground operation. On device, new work requires an advisory 192 MiB process headroom; headroom below 64 MiB or a system memory warning cancels work and invokes existing staging rollback. No expanded-memory entitlement. These snapshots/cancellation checks do not guarantee avoiding jetsam; the simulator cannot validate the device's process limit.
+
+Host verification: **79 passed**, 2 existing desktop file-coordination integrations explicitly skipped. All 15 ordinary-format fixtures and adversarial/rollback cases pass; ZIP/TAR mixed sources, 1,500-file packing and 8 encrypted RAR variants pass, now also checking progress byte totals. The metrics source type-checks against the arm64 iOS 26 deployment target with the iOS 27.1 SDK. Starting a normal extraction retains the bounded preview text; a memory warning releases it.
+
+Native Xcode 27.1 beta, same single Duo (iOS 27.1): **5/5 passed, 0 failed, 0 skipped**, 262.298 seconds. Cases: open/closed action icons, extraction metrics, 128 MiB streaming-generated ZIP fixture, multi-source ZIP/TAR creation, password RAR retry/preview/extraction. Bundle: `Test-ArchiveDeskIOS-DuoDebug-2026.10.06_11-09-09-+0800.xcresult`. Legacy xcresult inspection confirms these counts; one run warning records termination of the previous debug session (`code 9: killed`) when replacing its running instance. The 128 MiB completion screenshot is exported to `outputs/Duo-Packing-Performance-2026-10-06.png`; its footprint/throughput are simulator observations after completion, not a peak-memory or physical-device benchmark. Final source also builds/runs in native Xcode after the lazy-validation follow-up.
+
+These changes are included in the 0.3.0 Beta 1 unsigned device IPA, with matching source, relink kit and checksums; the historical 0.2.0 Release is retained.
 
 Format/icon follow-up on 2026-10-04: the final 11:50:43 Duo native suite passed 7/7 with no failures/skips. It includes ordinary/CP437 Deflate and solid 7z preview/extraction, Chinese/Japanese 7z filenames, readable notices, coordinated Files access, picker cancellation and rotation state retention. Native Release Simulator arm64+x86_64 build also passed. The later public-release preparation replaces the previously tested Mac artwork with a neutral archive-box icon and passes an unsigned arm64 device Release build. See ARCHIVE-ENGINES.md for codec/resource limits; this is not physical USB/iCloud or signed-device evidence.
 

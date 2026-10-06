@@ -22,9 +22,9 @@ enum CoordinatedFileAccess {
                     defer { try? output.close() }
                     while true {
                         try Task.checkCancellation()
-                        let bytes = try input.read(upToCount: 256 * 1_024) ?? Data()
+                        let bytes = try autoreleasepool { try input.read(upToCount: 256 * 1_024) ?? Data() }
                         if bytes.isEmpty { break }
-                        try output.write(contentsOf: bytes)
+                        try autoreleasepool { try output.write(contentsOf: bytes) }
                     }
                     try output.synchronize()
                 }

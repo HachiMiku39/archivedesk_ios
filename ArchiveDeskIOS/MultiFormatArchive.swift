@@ -118,7 +118,7 @@ final class NativeArchiveReader {
             if size == 0 { break }
             guard UInt64(size) <= limit - count else { throw ArchiveFailure.capacity }
             count += UInt64(size)
-            try body(Data(bytes: buffer, count: size))
+            try autoreleasepool { try body(Data(bytes: buffer, count: size)) }
         }
         return count
     }
@@ -199,12 +199,14 @@ struct MultiFormatArchive: Sendable {
         try NativeArchiveReader.stream(entry, from: url) { data.append($0) }
         return String(data: data, encoding: .utf8)
     }
-    func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true) throws -> URL {
+    func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true,
+                 progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
         let selected = entries.filter { paths == nil || paths!.contains($0.path) }
         guard !selected.isEmpty, selected.allSatisfy(\.isExtractable) else {
             throw ArchiveFailure.unsupported("The selection contains encrypted or unsupported entries.")
         }
         let total = try ArchiveSafety.validate(entries: selected, archiveBytes: 0)
+        let meter = ExtractionProgress(total: total, callback: progress)
         try Task.checkCancellation()
         if createOutputRoot { try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true) }
         let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .volumeAvailableCapacityKey])
@@ -224,13 +226,16 @@ struct MultiFormatArchive: Sendable {
                 guard FileManager.default.createFile(atPath: output.path, contents: nil) else { throw ArchiveFailure.capacity }
                 let handle = try FileHandle(forWritingTo: output)
                 do {
-                    try NativeArchiveReader.stream(entry, from: url) { try handle.write(contentsOf: $0) }
+                    try NativeArchiveReader.stream(entry, from: url) {
+                        try handle.write(contentsOf: $0); meter.advance($0.count)
+                    }
                     try handle.synchronize(); try handle.close()
                 } catch { try? handle.close(); throw error }
             }
             try Task.checkCancellation()
             let final = outputRoot.appendingPathComponent("Extracted-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.moveItem(at: staging, to: final)
+            meter.complete()
             return final
         } catch {
             let original = error

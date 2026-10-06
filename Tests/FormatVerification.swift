@@ -16,7 +16,9 @@ enum FormatVerification {
             let note = try archive.entries.first(where: { $0.path == "Notes.md" }).unwrap("Missing Notes.md: \(name)")
             let preview = try archive.previewText(note)
             precondition(preview == String(data: expected, encoding: .utf8), "Preview \(name)")
-            let output = try archive.extract(outputRoot: root)
+            let progress = ProgressMailbox()
+            let output = try archive.extract(outputRoot: root, progress: { progress.update($0, $1) })
+            precondition(progress.read().bytes == archive.entries.reduce(0) { $0 + $1.uncompressedSize }, "Decoded-output progress: \(name)")
             let bytes = try Data(contentsOf: output.appendingPathComponent("Notes.md"))
             precondition(bytes == expected, "Bytes \(name)")
             if ["sample.7z", "deflate.zip"].contains(name) {

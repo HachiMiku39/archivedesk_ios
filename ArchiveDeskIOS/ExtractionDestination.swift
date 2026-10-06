@@ -70,7 +70,8 @@ extension CoordinatedFileAccess {
     try extract(.zip(archive), paths: paths, to: pickedFolder)
   }
 
-  static func extract(_ archive: ArchiveContainer, paths: Set<String>, to pickedFolder: URL, password: String? = nil) throws
+  static func extract(_ archive: ArchiveContainer, paths: Set<String>, to pickedFolder: URL, password: String? = nil,
+                      progress: @escaping ArchiveProgress = { _, _ in }) throws
     -> ExtractionResult
   {
     let scoped = pickedFolder.startAccessingSecurityScopedResource()
@@ -87,7 +88,7 @@ extension CoordinatedFileAccess {
         try Task.checkCancellation()
         let kind = try DestinationPolicy.validate(folder)
         let directory = try archive.extract(
-          paths: paths, outputRoot: folder, createOutputRoot: false, password: password)
+          paths: paths, outputRoot: folder, createOutputRoot: false, password: password, progress: progress)
         return ExtractionResult(directory: directory, destination: kind)
       }
     }

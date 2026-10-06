@@ -2,6 +2,122 @@ import XCTest
 
 final class ArchiveDeskDuoUITests: XCTestCase {
     @MainActor
+    func testAccessiblePreviewAndBackNavigation() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "--accessibility-text", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let folder = app.descendants(matching: .any)["folder.Documents"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15)); folder.tap()
+        let note = app.descendants(matching: .any)["entry.Documents/Notes.md"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 5)); note.tap()
+        let extract = extractionAction(in: app)
+        XCTAssertTrue(extract.isEnabled)
+        capture(app, name: "Accessibility text — adaptive detail")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForLayout(app, size: nil)
+        XCTAssertTrue(extractionAction(in: app).isEnabled)
+        capture(app, name: "Landscape — selection retained")
+        XCUIDevice.shared.orientation = .portrait
+        let duoBack = app.buttons["BackButton"].firstMatch
+        let back = duoBack.exists ? duoBack : app.navigationBars.buttons.element(boundBy: 0)
+        // A wide iPad may retain the sidebar instead of displaying a back button.
+        if !note.isHittable && back.exists && back.isHittable { back.tap() }
+        XCTAssertTrue(note.waitForExistence(timeout: 5), app.debugDescription)
+        let parent = app.buttons["parentFolder"].firstMatch
+        if parent.isHittable { parent.tap(); XCTAssertTrue(folder.waitForExistence(timeout: 5)) }
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+    @MainActor
+    func testLargePackingMetrics() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--packing-fixtures", "--performance-fixture", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["packingSource.Performance.bin"].firstMatch.waitForExistence(timeout: 30))
+        let create = app.buttons["createArchive"].firstMatch
+        waitForStableHitTarget(create); create.tap()
+        let local = app.buttons["ArchiveDesk on this device"].firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5))
+        waitForStableHitTarget(local); local.tap()
+        let tasks = app.buttons["Tasks"].firstMatch
+        waitForStableHitTarget(tasks); tasks.tap()
+        assertMetrics(in: app)
+        capture(app, name: "128 MiB packing performance")
+        XCTAssertTrue(app.staticTexts["Archive created"].firstMatch.waitForExistence(timeout: 90), app.debugDescription)
+        let progress = app.progressIndicators["operationProgress"].firstMatch
+        XCTAssertTrue((progress.value as? String)?.contains("100") == true, app.debugDescription)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        capture(app, name: "Packing committed — final average speed")
+    }
+
+    @MainActor
+    func testExtractionMetrics() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let folder = app.descendants(matching: .any)["folder.Documents"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15)); folder.tap()
+        let note = app.descendants(matching: .any)["entry.Documents/Notes.md"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 5)); note.tap()
+        let extract = extractionAction(in: app)
+        waitForStableHitTarget(extract); extract.tap()
+        let local = app.buttons["ArchiveDesk on this device"].firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); waitForStableHitTarget(local); local.tap()
+        let tasks = app.buttons["Tasks"].firstMatch
+        waitForStableHitTarget(tasks); tasks.tap()
+        XCTAssertTrue(app.staticTexts["Extraction complete"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        assertMetrics(in: app)
+        let progress = app.progressIndicators["operationProgress"].firstMatch
+        XCTAssertTrue((progress.value as? String)?.contains("100") == true, app.debugDescription)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        capture(app, name: "Extraction performance — verified completion")
+    }
+
+    @MainActor
+    private func assertMetrics(in app: XCUIApplication) {
+        for identifier in ["cpuUsage", "ramUsage", "operationSpeed", "processedBytes", "operationProgress"] {
+            let value = app.descendants(matching: .any)[identifier].firstMatch
+            for _ in 0..<5 where !value.exists { app.collectionViews.firstMatch.swipeUp() }
+            XCTAssertTrue(value.waitForExistence(timeout: 5), app.debugDescription)
+        }
+    }
+
+    @MainActor
+    func testArchiveActionIconsAndNavigation() throws {
+        // Screenshots cover the distinct open/closed box template assets and
+        // the native tab's selected rendering on the actual Duo runtime.
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let folder = app.descendants(matching: .any)["folder.Documents"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15), app.debugDescription)
+        folder.tap()
+        let note = app.descendants(matching: .any)["entry.Documents/Notes.md"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 5), app.debugDescription)
+        note.tap()
+        let extract = extractionAction(in: app)
+        XCTAssertTrue(extract.isEnabled, app.debugDescription)
+        capture(app, name: "Extract action — open box")
+        waitForStableHitTarget(extract); extract.tap()
+        // Native confirmation popovers can omit Cancel on this display. Use
+        // the verified local destination instead of assuming that button exists.
+        let local = app.buttons["ArchiveDesk on this device"].firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5), app.debugDescription)
+        waitForStableHitTarget(local); local.tap()
+        let receipt = app.descendants(matching: .any)["extractionReceipt"].firstMatch
+        if !receipt.waitForExistence(timeout: 5) { app.swipeUp() }
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10), app.debugDescription)
+        let packingTab = app.buttons["Create archive"].firstMatch
+        XCTAssertTrue(packingTab.waitForExistence(timeout: 5), app.debugDescription)
+        waitForStableHitTarget(packingTab); packingTab.tap()
+        let create = app.buttons["createArchive"].firstMatch
+        XCTAssertTrue(create.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(create.isEnabled, "No sources were added; icon change must not alter validation.")
+        capture(app, name: "Create archive action — closed box")
+    }
+
+    @MainActor
     func testPackingPickerCancellationPreservesSources() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--packing-fixtures", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
@@ -35,6 +151,7 @@ final class ArchiveDeskDuoUITests: XCTestCase {
 
     @MainActor
     func testMultiSourceZIPAndTARCreation() throws {
+        XCUIDevice.shared.orientation = .portrait
         for format in ["ZIP", "TAR"] {
             let app = XCUIApplication()
             app.launchArguments = ["--packing-fixtures", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
@@ -42,6 +159,7 @@ final class ArchiveDeskDuoUITests: XCTestCase {
             XCTAssertTrue(app.descendants(matching: .any)["packingSource.SourceA"].firstMatch.waitForExistence(timeout: 15), app.debugDescription)
             XCTAssertTrue(app.descendants(matching: .any)["packingSource.other.txt"].firstMatch.exists)
             let choice = app.segmentedControls["packingFormat"].buttons[format]
+            for _ in 0..<5 where !choice.exists { app.collectionViews.firstMatch.swipeUp() }
             XCTAssertTrue(choice.waitForExistence(timeout: 5), app.debugDescription)
             choice.tap()
             let create = app.buttons["createArchive"].firstMatch
@@ -55,7 +173,11 @@ final class ArchiveDeskDuoUITests: XCTestCase {
                 app.collectionViews.firstMatch.swipeUp()
             }
             XCTAssertTrue(receipt.waitForExistence(timeout: 10), app.debugDescription)
-            XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label ENDSWITH %@", "." + format.lowercased())).firstMatch.exists)
+            // A visible Export header does not instantiate the following lazy
+            // Form row on every viewport. Scroll to the actual output path.
+            let outputPath = app.staticTexts.containing(NSPredicate(format: "label ENDSWITH %@", "." + format.lowercased())).firstMatch
+            for _ in 0..<5 where !outputPath.exists { app.collectionViews.firstMatch.swipeUp() }
+            XCTAssertTrue(outputPath.waitForExistence(timeout: 5), app.debugDescription)
             XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
             capture(app, name: "Multi-source " + format + " creation")
             app.terminate()
@@ -311,7 +433,10 @@ final class ArchiveDeskDuoUITests: XCTestCase {
     @MainActor
     private func extractionAction(in app: XCUIApplication) -> XCUIElement {
         let direct = app.buttons["extractSelected"].firstMatch
-        if direct.exists && direct.isHittable { return direct }
+        if direct.waitForExistence(timeout: 5) {
+            waitForStableHitTarget(direct)
+            return direct
+        }
         let more = app.buttons["More"].firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 5), app.debugDescription)
         waitForStableHitTarget(more)
