@@ -21,9 +21,15 @@ perl -0pi -e 's/^  #define USE_posix_memalign\r?$/  \/\* ArchiveDesk: bounded al
 # cache lookup and population: keys may live only inside a task-owned decoder.
 perl -0pi -e 's/static CKey g_Key;.*?(?=bool CDecoder::CalcKey_and_CheckPassword)/\/\/ ArchiveDesk: no process-global password or key cache.\n/s; s/\{\r?\n      MT_LOCK\r?\n      if \(!g_Key\._needCalc && IsKeyEqualTo\(g_Key\)\)\r?\n      \{\r?\n        CopyCalcedKeysFrom\(g_Key\);\r?\n        _needCalc = false;\r?\n      \}\r?\n    \}/\/\* ArchiveDesk: derive only within this task-owned decoder. \*\//; s/\{\r?\n        MT_LOCK\r?\n        g_Key = \*this;\r?\n      \}/\/\* ArchiveDesk: never retain keys across tasks. \*\//' "$task_source/CPP/7zip/Crypto/Rar5Aes.cpp"
 ! rg -q 'g_Key|MT_LOCK' "$task_source/CPP/7zip/Crypto/Rar5Aes.cpp"
+# ArchiveDesk UDF metadata budgets. C++ allocations are not covered by the C
+# allocator, so bound upstream vectors, recursion and inline data explicitly.
+perl -0pi -e 's/kNumRecursionLevelsMax = [^\n]+/kNumRecursionLevelsMax = 128; \/\/ ArchiveDesk safety budget/; s/kNumItemsMax = [^\n]+/kNumItemsMax = 100000; \/\/ ArchiveDesk safety budget/; s/kNumFilesMax = [^\n]+/kNumFilesMax = 100000; \/\/ ArchiveDesk safety budget/; s/kNumRefsMax = [^\n]+/kNumRefsMax = 100000; \/\/ ArchiveDesk safety budget/; s/kNumExtentsMax = [^\n]+/kNumExtentsMax = 262144; \/\/ ArchiveDesk safety budget/; s/kFileNameLengthTotalMax = [^\n]+/kFileNameLengthTotalMax = 32 * 1024 * 1024; \/\/ ArchiveDesk safety budget/; s/kInlineExtentsSizeMax = [^\n]+/kInlineExtentsSizeMax = 32 * 1024 * 1024; \/\/ ArchiveDesk safety budget/' "$task_source/CPP/7zip/Archive/Udf/UdfIn.cpp"
+# Directory/metadata tables are not regular payloads. Bound nested buffers;
+# multi-gigabyte files such as install.wim still stream through callbacks.
+perl -0pi -e 's/if \(item\.Size >= \(UInt32\)1 << 30\)/if (item.Size > 1024 * 1024)/; s/vol\.BlockSize > \(\(UInt32\)1 << 30\)/vol.BlockSize > 65536/' "$task_source/CPP/7zip/Archive/Udf/UdfIn.cpp"
 task_cpp=(
   CPP/Common/CRC.cpp CPP/Common/IntToString.cpp CPP/Common/StringToInt.cpp CPP/Common/MyString.cpp CPP/Common/MyVector.cpp
-  CPP/Common/StringConvert.cpp CPP/Common/UTFConvert.cpp CPP/Common/MyWindows.cpp
+  CPP/Common/StringConvert.cpp CPP/Common/UTFConvert.cpp CPP/Common/MyWindows.cpp CPP/Common/MyMap.cpp
   CPP/Common/Sha1Prepare.cpp CPP/Common/Sha256Prepare.cpp
   CPP/Windows/PropVariant.cpp CPP/Windows/PropVariantUtils.cpp CPP/Windows/PropVariantConv.cpp
   CPP/Windows/TimeUtils.cpp CPP/Windows/System.cpp CPP/Windows/Synchronization.cpp
@@ -34,6 +40,7 @@ task_cpp=(
   CPP/7zip/Archive/Common/FindSignature.cpp CPP/7zip/Archive/Common/ItemNameUtils.cpp
   CPP/7zip/Archive/Common/OutStreamWithCRC.cpp CPP/7zip/Archive/Common/HandlerOut.cpp CPP/7zip/Archive/HandlerCont.cpp
   CPP/7zip/Archive/Rar/RarHandler.cpp CPP/7zip/Archive/Rar/Rar5Handler.cpp
+  CPP/7zip/Archive/Udf/UdfHandler.cpp CPP/7zip/Archive/Udf/UdfIn.cpp
   CPP/7zip/Compress/BitlDecoder.cpp CPP/7zip/Compress/LzOutWindow.cpp CPP/7zip/Compress/CopyCoder.cpp
   CPP/7zip/Compress/Rar1Decoder.cpp CPP/7zip/Compress/Rar2Decoder.cpp CPP/7zip/Compress/Rar3Decoder.cpp
   CPP/7zip/Compress/Rar3Vm.cpp CPP/7zip/Compress/Rar5Decoder.cpp

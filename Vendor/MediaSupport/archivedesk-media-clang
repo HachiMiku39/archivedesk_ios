@@ -1,0 +1,4 @@
+#!/bin/zsh
+set -eu
+exec /usr/bin/xcrun --sdk "${MEDIA_SDK:?}" clang -target "${MEDIA_TARGET:?}" \
+  -isysroot "$(/usr/bin/xcrun --sdk "$MEDIA_SDK" --show-sdk-path)" "$@"

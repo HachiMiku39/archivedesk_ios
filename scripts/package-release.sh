@@ -27,6 +27,7 @@ while IFS= read -r task_object; do
 done < "$task_objects/ArchiveDeskIOS.LinkFileList"
 cp Vendor/ArchiveRar.xcframework/ios-arm64/libArchiveRar.a "$task_kit/libraries/"
 cp Vendor/ArchiveCodecs.xcframework/ios-arm64/libArchiveCodecs.a "$task_kit/libraries/"
+cp Vendor/ArchiveMedia.xcframework/ios-arm64/libArchiveMedia.a "$task_kit/libraries/"
 ditto --norsrc --noextattr "$task_app" "$task_kit/resources/ArchiveDeskIOS.app"
 # Delete only the copied executable: original build remains intact.
 [[ -f "$task_kit/resources/ArchiveDeskIOS.app/ArchiveDeskIOS" ]] || exit 1
@@ -35,7 +36,8 @@ cp ArchiveDeskIOS/ThirdParty/CodecNotices.txt "$task_kit/"
 cp scripts/relink-ios.sh "$task_kit/relink.sh"
 tar -czf "$task_kit/modified-rar-sources.tar.gz" -C work/rar-sources \
   C/Alloc.c CPP/Common/MyWindows.cpp CPP/7zip/Crypto/Rar5Aes.cpp \
-  CPP/7zip/Archive/Rar/RarHandler.cpp CPP/7zip/Archive/Rar/Rar5Handler.cpp
+  CPP/7zip/Archive/Rar/RarHandler.cpp CPP/7zip/Archive/Rar/Rar5Handler.cpp \
+  CPP/7zip/Archive/Udf/UdfIn.cpp
 cp docs/RELINK-KIT-README.md "$task_kit/README.md"
 task_hash=$(shasum -a 256 "$task_ipa" | awk '{print $1}')
 TASK_RELEASE_VERSION="$task_version" TASK_RELEASE_BUILD="$task_build" TASK_RELEASE_SHA="$task_hash" \

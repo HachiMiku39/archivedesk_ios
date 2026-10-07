@@ -5,6 +5,9 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Dev
 task_codecs="$PWD/Vendor/ArchiveCodecs.xcframework/macos-arm64"
 task_rar="$PWD/Vendor/ArchiveRar.xcframework/macos-arm64"
 mkdir -p work/bin work/ModuleCache
+if [[ ! -f work/format-fixtures/sample.udf.iso ]]; then
+  hdiutil makehybrid -udf -o work/format-fixtures/sample.udf work/format-fixtures/input
+fi
 /usr/bin/xcrun swiftc -parse-as-library -swift-version 6 \
   -target arm64-apple-macosx26.0 -sdk "$(/usr/bin/xcrun --sdk macosx --show-sdk-path)" \
   -module-cache-path work/ModuleCache -I "$task_codecs/Headers" -L "$task_codecs" \

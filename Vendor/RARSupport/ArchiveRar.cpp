@@ -1,5 +1,5 @@
 // ArchiveDesk bridge, LGPL-2.1-or-later.
-// Uses 7-Zip RAR decoding only. RAR codec sources have the unRAR restriction:
+// Uses 7-Zip RAR and UDF reading only. RAR codec sources have the unRAR restriction:
 // this code must not be used to develop a RAR (WinRAR) compatible archiver.
 #include "ArchiveRar.h"
 #include "CPP/Common/MyInitGuid.h"
@@ -14,6 +14,7 @@
 #include "CPP/7zip/Common/RegisterArc.h"
 #include "CPP/7zip/Archive/Rar/RarHandler.h"
 #include "CPP/7zip/Archive/Rar/Rar5Handler.h"
+#include "CPP/7zip/Archive/Udf/UdfHandler.h"
 // Keep decoder registration in the referenced bridge object, not a discarded
 // static-library object. No compression codec or external codec loader exists.
 #include "CPP/7zip/Compress/RarCodecsRegister.cpp"
@@ -25,12 +26,12 @@
 #include <cstring>
 
 using NWindows::NCOM::CPropVariant;
-void RegisterArc(const CArcInfo *) throw() {} // Only two directly-created readers.
+void RegisterArc(const CArcInfo *) throw() {} // Only directly-created read-only handlers.
 
 struct Job {
     ADRContinue proceed;
     void *context;
-    bool missingPassword = false, askedPassword = false, cancelled = false;
+    bool missingPassword = false, askedPassword = false, cancelled = false, resourceLimit = false;
     bool Continue() {
         if (proceed && !proceed(context)) { cancelled = true; return false; }
         return true;
@@ -86,11 +87,11 @@ public:
     OpenCallback(Job *j, const char *p): job(j), password(p) {}
 };
 Z7_COM7F_IMF(OpenCallback::SetTotal(const UInt64 *files, const UInt64 *)) {
-    if (files && *files > 100000) return E_OUTOFMEMORY;
+    if (files && *files > 100000) { job->resourceLimit = true; return E_ABORT; }
     return job->Continue() ? S_OK : E_ABORT;
 }
 Z7_COM7F_IMF(OpenCallback::SetCompleted(const UInt64 *files, const UInt64 *)) {
-    if (files && *files > 100000) return E_OUTOFMEMORY;
+    if (files && *files > 100000) { job->resourceLimit = true; return E_ABORT; }
     return job->Continue() ? S_OK : E_ABORT;
 }
 Z7_COM7F_IMF(OpenCallback::CryptoGetTextPassword(BSTR *result)) { return job->Password(password, result); }
@@ -159,6 +160,7 @@ struct Handle {
 };
 static int status(HRESULT hr, const Job &job) {
     if (job.cancelled) return ADR_CANCELLED;
+    if (job.resourceLimit) return ADR_RESOURCE_LIMIT;
     if (job.missingPassword) return ADR_PASSWORD_REQUIRED;
     if (hr == E_OUTOFMEMORY) return ADR_CAPACITY;
     if (hr != S_OK) return ADR_PASSWORD_OR_DAMAGE;
@@ -171,7 +173,7 @@ static CPropVariant property(Handle *h, UInt32 index, PROPID id, bool archive = 
     return value;
 }
 static bool truth(const CPropVariant &v) { return v.vt == VT_BOOL && v.boolVal != VARIANT_FALSE; }
-extern "C" void *adr_open(const char *path, const char *password, ADRContinue proceed, void *context, int *result) {
+static void *openArchive(const char *path, const char *password, ADRContinue proceed, void *context, int *result, bool udf) {
     *result = ADR_MALFORMED;
     try {
         static const bool tablesReady = [] { CrcGenerateTable(); Sha1Prepare(); Sha256Prepare(); return true; }();
@@ -181,11 +183,14 @@ extern "C" void *adr_open(const char *path, const char *password, ADRContinue pr
         if (!h->job.Continue()) { *result = ADR_CANCELLED; return nullptr; }
         int fd = open(path, O_RDONLY|O_NOFOLLOW);
         if (fd < 0) return nullptr;
-        Byte signature[8]; const ssize_t n = pread(fd, signature, 8, 0);
-        if (n < 7 || memcmp(signature, "Rar!\032\007", 6) != 0) { close(fd); return nullptr; }
-        h->version = signature[6] == 1 && n == 8 && signature[7] == 0 ? 5 : 4;
+        if (!udf) {
+            Byte signature[8]; const ssize_t n = pread(fd, signature, 8, 0);
+            if (n < 7 || memcmp(signature, "Rar!\032\007", 6) != 0) { close(fd); return nullptr; }
+            h->version = signature[6] == 1 && n == 8 && signature[7] == 0 ? 5 : 4;
+        } else { h->version = 0; }
         h->input = new Input(fd, &h->job);
-        if (h->version == 5) {
+        if (udf) { h->archive = new NArchive::NUdf::CHandler; }
+        else if (h->version == 5) {
             auto *handler = new NArchive::NRar5::CHandler;
             h->archive = handler;
             const wchar_t *name = L"memx";
@@ -205,10 +210,17 @@ extern "C" void *adr_open(const char *path, const char *password, ADRContinue pr
                 *result = ADR_PASSWORD_OR_DAMAGE; return nullptr;
             }
         }
-        if (h->archive->GetNumberOfItems(&h->count) != S_OK || h->count > 100000) { *result = ADR_CAPACITY; return nullptr; }
+        if (h->archive->GetNumberOfItems(&h->count) != S_OK) return nullptr;
+        if (h->count > 100000) { *result = ADR_RESOURCE_LIMIT; return nullptr; }
         *result = ADR_OK; return h.release();
     } catch (int e) { *result = e; } catch (const std::bad_alloc &) { *result = ADR_CAPACITY; } catch (...) { *result = ADR_MALFORMED; }
     return nullptr;
+}
+extern "C" void *adr_open(const char *path, const char *password, ADRContinue proceed, void *context, int *result) {
+    return openArchive(path, password, proceed, context, result, false);
+}
+extern "C" void *adr_open_udf(const char *path, ADRContinue proceed, void *context, int *result) {
+    return openArchive(path, nullptr, proceed, context, result, true);
 }
 extern "C" void adr_close(void *handle) { delete (Handle *)handle; }
 extern "C" uint32_t adr_count(void *handle) { return ((Handle *)handle)->count; }

@@ -61,9 +61,25 @@ enum CoreVerification {
         }
 
         let text = Data("ArchiveDesk\n".utf8)
+        check(ArchiveTextPreview.decode(Data([0xff, 0xfe, 0x41, 0, 0x2c, 0x67])) == "A本", "Pure Swift UTF-16LE BOM preview")
+        check(ArchiveTextPreview.decode(Data([0xfe, 0xff, 0, 0x41, 0x67, 0x2c])) == "A本", "Pure Swift UTF-16BE BOM preview")
+        check(ArchiveTextPreview.decode(Data([0xff, 0xfe, 0])) == nil, "Reject truncated UTF-16")
+        check(ArchiveTextPreview.decode(Data([0xff, 0xfe, 0, 0xd8])) == nil, "Reject unpaired UTF-16 surrogate")
+        check(ArchiveTextPreview.decode(Data([0xc0, 0x80])) == nil, "Reject malformed UTF-8")
+        var encryptedEntry = ArchiveEntry(id: 99, path: "visible.jpeg", compressedSize: 1, uncompressedSize: 1, crc32: 0, compressionMethod: 0, localHeaderOffset: 0)
+        encryptedEntry.flags = 1
+        check(ArchiveContainer.zip(try open(DebugArchiveFixture.bytes([]))).requiresPassword(encryptedEntry) && !encryptedEntry.isExtractable, "Visible encrypted ZIP filename cannot bypass password or unsupported decoder gates")
         let fixture = DebugArchiveFixture.bytes([("Folder/Readme.txt", text), ("Folder/日本語.txt", Data("日本語".utf8)), ("empty.bin", Data())])
         let archive = try open(fixture)
         check(archive.entries.count == 3, "Index count")
+        check(ArchiveExtractionScope.folder("Folder").entries(in: archive.entries).count == 2, "Folder extraction includes implicit subdirectory files")
+        check(ArchiveExtractionScope.folder("Fold").entries(in: archive.entries).isEmpty, "Folder extraction respects component boundaries")
+        check(ArchiveExtractionScope.all.entries(in: archive.entries).count == 3, "Whole archive extraction")
+        check(ArchiveExtractionScope.items(["Folder", "Folder/Readme.txt", "empty.bin"]).entries(in: archive.entries).count == 3, "Mixed folder/file selection deduplicates overlapping children")
+        check(ArchiveExtractionScope.items(["Folder/日本語.txt"]).entries(in: archive.entries).count == 1, "Individual selection excludes siblings")
+        check(ArchiveExtractionScope.items([]).entries(in: archive.entries).isEmpty, "Empty multi-selection")
+        let initializationError = ArchiveFailure.codecInitialization("UTF-8 locale", 2, 0).localizedDescription
+        check(initializationError.contains("UTF-8 locale") && initializationError.contains("errno=2") && !initializationError.contains("safety budget"), "Locale failure is not a claim of exhausted decoder budget")
         check(try archive.previewText(archive.entries[0]) == "ArchiveDesk\n", "Verified preview")
         let extractedProgress = ProgressMailbox()
         let output = try archive.extract(outputRoot: root, progress: { extractedProgress.update($0, $1) })
@@ -74,14 +90,24 @@ enum CoreVerification {
         check(try DestinationPolicy.classify(inAppDocuments: true, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: true) == .appDocuments, "App Documents writable")
         check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: true, volumeIsLocal: true, volumeIsInternal: true) == .iCloud, "System iCloud writable")
         check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: false) == .externalVolume, "External local volume writable")
-        rejects("Provider cache is not proof of local storage") {
-            _ = try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: true)
-        }
-        rejects("Unknown provider stays read-only") {
-            _ = try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: nil, volumeIsLocal: nil, volumeIsInternal: nil)
-        }
-        rejects("Network cloud volume stays read-only") {
-            _ = try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: false, volumeIsInternal: false)
+        check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: nil, differentFromAppVolume: true) == .externalVolume, "External volume with missing bus metadata")
+        check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: nil, volumeIsInternal: nil, differentFromAppVolume: true, fileSystemIsLocal: true) == .externalVolume, "Local filesystem proof for missing optional metadata")
+        check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: nil, differentFromAppVolume: false) == .authorizedDirectory, "Missing bus metadata does not reject a picked directory")
+        check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: false, volumeIsInternal: nil, differentFromAppVolume: true, fileSystemIsLocal: true) == .authorizedDirectory, "Nonlocal provider is not mislabeled as external storage")
+        check(StorageBudget.available(important: 500_000_000_000, ordinary: 2_000_000_000, fileSystem: nil) == 500_000_000_000, "23 GB write uses important-usage capacity including reclaimable space")
+        check(StorageBudget.available(important: 0, ordinary: 0, fileSystem: 82 * 1024 * 1024 * 1024) == 82 * 1024 * 1024 * 1024, "Unsupported zero metadata does not hide filesystem capacity")
+        check(StorageBudget.available(important: nil, ordinary: nil, fileSystem: nil) == nil, "Unknown capacity is not zero")
+        check(StorageBudget.available(important: 0, ordinary: 0, fileSystem: 0) == 0, "Actual zero capacity remains zero")
+        check(!ArchiveFailure.memoryLimit.localizedDescription.contains("not enough available storage"), "Memory limit is not a disk-space error")
+        var udfRecognition = Data(repeating: 0, count: 2048 * 3)
+        udfRecognition.replaceSubrange(2049..<2054, with: Data("NSR02".utf8))
+        check(MultiFormatArchive.hasUDFRecognition(udfRecognition), "UDF hybrid image must not be mistaken for its ISO9660 README")
+        check(!MultiFormatArchive.hasUDFRecognition(Data(repeating: 0, count: 2048)), "Ordinary ISO9660 is not marked UDF")
+        check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: true, isWritable: true) == .authorizedDirectory, "Picked local Downloads or provider cache can attempt authorized writes")
+        check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: nil, volumeIsLocal: nil, volumeIsInternal: nil) == .authorizedDirectory, "Unknown capacity/provider metadata is not a permission denial")
+        check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: false, volumeIsInternal: false, isWritable: true) == .authorizedDirectory, "Writable third-party provider uses system authorization")
+        rejects("Explicit read-only provider is still rejected") {
+            _ = try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: nil, volumeIsLocal: nil, volumeIsInternal: nil, isWritable: false)
         }
         let missingRoot = temporary.appendingPathComponent("do-not-create")
         rejects("Missing external root is never recreated") { _ = try archive.extract(outputRoot: missingRoot, createOutputRoot: false) }
@@ -227,6 +253,15 @@ enum CoreVerification {
         check((try? FileManager.default.contentsOfDirectory(atPath: cancelledRoot.path).isEmpty) != false, "Cancelled staging removed")
 
         // Resizing and hinge diagnostics cannot mutate domain navigation or preview.
+        let encryptedModel = WorkspaceModel()
+        encryptedModel.archive = .zip(secret)
+        encryptedModel.select(secret.entries[0].path)
+        check(encryptedModel.isPasswordPresented && encryptedModel.previewText == nil && encryptedModel.mediaPreview.phase == .locked && encryptedModel.mediaPreview.info == nil,
+              "Encrypted ZIP selection requests a password before preview")
+        encryptedModel.submitPassword("test-only-password")
+        check(!encryptedModel.isPasswordPresented && encryptedModel.previewText == nil && encryptedModel.mediaPreview.phase == .locked && encryptedModel.mediaPreview.info == nil,
+              "Unsupported encrypted ZIP remains locked after password input; no decoder starts")
+        encryptedModel.cancel()
         let model = WorkspaceModel()
         model.importArchive(archive.url, alreadyPrivate: true)
         for _ in 0..<400 where model.isBusy { try await Task.sleep(for: .milliseconds(5)) }
@@ -260,8 +295,15 @@ enum CoreVerification {
         model.errorMessage = nil
         model.importArchive(archive.url, alreadyPrivate: true)
         for _ in 0..<400 where model.isBusy { try await Task.sleep(for: .milliseconds(5)) }
-        check(model.archive != nil && !model.isBusy && model.errorMessage == nil && model.transferMetrics == nil,
+        check(model.archive != nil && !model.isBusy && model.errorMessage == nil && model.transferMetrics?.succeeded == true,
               "A fresh task clears memory cancellation and old metrics")
+        check(model.canExtract(.all) && model.canExtract(.all), "Whole extraction availability is stable across refreshes")
+        check(model.canExtract(.folder("Folder")) && !model.canExtract(.folder("Fold")), "Folder availability cache keys respect boundaries")
+        check(model.canExtract(.items(["empty.bin"])) && !model.canExtract(.items([])), "Multi-selection availability refreshes when selection changes")
+        model.archive = nil
+        check(!model.canExtract(.all), "Closing an archive invalidates extraction availability")
+        model.archive = try ArchiveContainer.open(url: archive.url)
+        check(model.canExtract(.all), "New archive resets extraction availability caches")
         print("PASS: \(checks) archive, metrics, streaming, cancellation, Unicode, ZIP64 and workspace checks")
     }
 }

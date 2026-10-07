@@ -1,7 +1,7 @@
 import Foundation
 
 enum CoordinatedFileAccess {
-    static func snapshot(of externalURL: URL) throws -> URL {
+    static func snapshot(of externalURL: URL, progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
             let scoped = externalURL.startAccessingSecurityScopedResource()
             defer { if scoped { externalURL.stopAccessingSecurityScopedResource() } }
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-\(UUID().uuidString)", isDirectory: true)
@@ -17,7 +17,10 @@ enum CoordinatedFileAccess {
                     guard values.isRegularFile == true, values.isSymbolicLink != true else { throw ArchiveFailure.unsafePath(readableURL.lastPathComponent) }
                     let input = try FileHandle(forReadingFrom: readableURL)
                     defer { try? input.close() }
-                    guard FileManager.default.createFile(atPath: target.path, contents: nil) else { throw ArchiveFailure.capacity }
+                    let size = (try readableURL.resourceValues(forKeys: [.fileSizeKey])).fileSize.map { UInt64(max(0, $0)) } ?? 0
+                    if size > 0 { try StorageBudget.require(size + 16 * 1024 * 1024, at: directory) }
+                    let meter = ExtractionProgress(total: size, callback: progress)
+                    try StorageBudget.createFile(at: target)
                     let output = try FileHandle(forWritingTo: target)
                     defer { try? output.close() }
                     while true {
@@ -25,8 +28,10 @@ enum CoordinatedFileAccess {
                         let bytes = try autoreleasepool { try input.read(upToCount: 256 * 1_024) ?? Data() }
                         if bytes.isEmpty { break }
                         try autoreleasepool { try output.write(contentsOf: bytes) }
+                        meter.advance(bytes.count)
                     }
                     try output.synchronize()
+                    meter.complete()
                 }
                 catch { operationError = error }
             }

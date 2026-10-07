@@ -11,7 +11,7 @@ enum ArchiveContainer: Sendable {
     var formatName: String { switch self { case .zip: "ZIP"; case .native(let a): a.formatName; case .rar(let a): a.formatName } }
     func requiresPassword(_ entry: ArchiveEntry) -> Bool {
         if case .rar(let rar) = self { return rar.requiresPassword(entry) }
-        return false
+        return entry.isEncrypted
     }
 
     static func open(url: URL, password: String? = nil) throws -> Self {

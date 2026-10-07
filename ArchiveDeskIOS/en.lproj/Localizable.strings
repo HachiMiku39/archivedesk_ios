@@ -61,3 +61,5 @@
 "Choose an existing folder, not a file or symbolic link." = "Choose an existing folder, not a file or symbolic link.";
 "This folder is read-only. Choose a writable destination in Files." = "This folder is read-only. Choose a writable destination in Files.";
 "Extraction failed and the temporary folder could not be removed. Reconnect the drive and remove only this unfinished folder:" = "Extraction failed and the temporary folder could not be removed. Reconnect the drive and remove only this unfinished folder:";
+"Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced." = "Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced.";
+"If access is revoked or a drive is disconnected, choose the folder again. A cloud provider may finish uploading after the local write completes." = "If access is revoked or a drive is disconnected, choose the folder again. A cloud provider may finish uploading after the local write completes.";

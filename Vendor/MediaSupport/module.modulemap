@@ -1,0 +1,4 @@
+module CArchiveMedia {
+    header "ArchiveMedia.h"
+    export *
+}

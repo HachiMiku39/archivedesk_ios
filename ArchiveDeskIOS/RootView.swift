@@ -13,11 +13,16 @@ struct RootView: View {
     @StateObject private var model = WorkspaceModel()
     @State private var isDestinationChoicePresented = false
     @State private var isDestinationPickerPresented = false
+    @State private var extractionScope = ArchiveExtractionScope.all
+    @State private var isSelectingEntries = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         tabs
+            .safeAreaInset(edge: .bottom) {
+                if model.isBusy { LiveOperationView(model: model) }
+            }
             .modifier(DuoObservation(model: model))
             .fileImporter(isPresented: $model.isImporterPresented, allowedContentTypes: [.zip, .archive, .data], allowsMultipleSelection: false) { result in
                 switch result {
@@ -26,18 +31,18 @@ struct RootView: View {
                 }
             }
             .confirmationDialog("Extraction destination", isPresented: $isDestinationChoicePresented, titleVisibility: .visible) {
-                Button("ArchiveDesk on this device") { Task { @MainActor in model.extractSelected() } }
+                Button("ArchiveDesk on this device") { Task { @MainActor in model.extract(scope: extractionScope) } }
                 Button("Choose folder in Files…") { Task { @MainActor in isDestinationPickerPresented = true } }
                 Button("Cancel", role: .cancel) { }
             } message: {
-                Text("Write to local storage, an external drive, or iCloud. Other cloud drives are read-only. A new folder is created; existing files are never replaced.")
+                Text("Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced.")
             }
             .sheet(isPresented: $isDestinationPickerPresented) {
                 // Keep the system controller intact: its adaptive bars handle
                 // Duo's camera, hinge and provider-specific folder actions.
                 DestinationFolderPicker { folder in
                     isDestinationPickerPresented = false
-                    Task { @MainActor in model.extractSelected(to: folder) }
+                    Task { @MainActor in model.extract(scope: extractionScope, to: folder) }
                 } onCancel: { isDestinationPickerPresented = false }
                 .safeAreaInset(edge: .bottom) {
                     // Some compact folder-picker presentations omit a native
@@ -99,15 +104,56 @@ struct RootView: View {
             Group {
                 if model.archive != nil {
                     List(selection: Binding(get: { model.navigation.selection }, set: { model.select($0) })) {
+                        Section {
+                            Button(isSelectingEntries ? String(localized: "Done selecting") : String(localized: "Select items")) {
+                                isSelectingEntries.toggle()
+                            }.disabled(model.isBusy).accessibilityIdentifier("toggleExtractionSelection")
+                            if !model.extractionSelection.isEmpty {
+                                Button { requestExtraction(.items(model.extractionSelection)) } label: {
+                                    Label(String(localized: "Extract selected items") + " (\(model.extractionSelection.count))", image: ArchiveActionIcon.extract)
+                                }
+                                .disabled(!model.canExtract(.items(model.extractionSelection)))
+                                .accessibilityIdentifier("extractSelectedItems")
+                                Button("Clear selection") { model.extractionSelection = [] }.disabled(model.isBusy)
+                            }
+                            let scope: ArchiveExtractionScope = model.navigation.folder.isEmpty ? .all : .folder(model.navigation.folder)
+                            Button { requestExtraction(scope) } label: {
+                                Label(model.navigation.folder.isEmpty ? String(localized: "Extract all contents") : String(localized: "Extract entire folder"), image: ArchiveActionIcon.extract)
+                            }
+                            .disabled(!model.canExtract(scope))
+                            .accessibilityIdentifier("extractFolderOrAll")
+                            if let location = model.extractionLocation, model.exportedEntryPath == nil {
+                                Text(String(localized: "Extraction complete") + ": " + location).font(.caption)
+                                    .accessibilityIdentifier("folderExtractionReceipt")
+                            }
+                        }
                         if !model.navigation.folder.isEmpty {
                             Button(action: model.goUp) { Label("Parent folder", systemImage: "arrow.up") }
                                 .accessibilityIdentifier("parentFolder")
                         }
                         ForEach(model.browserItems) { item in
+                            HStack {
+                                if isSelectingEntries {
+                                    Button {
+                                        if !model.extractionSelection.insert(item.path).inserted { model.extractionSelection.remove(item.path) }
+                                    } label: {
+                                        Image(systemName: model.extractionSelection.contains(item.path) ? "checkmark.circle.fill" : "circle")
+                                            .frame(minWidth: 44, minHeight: 44)
+                                    }
+                                    .buttonStyle(.borderless).disabled(model.isBusy)
+                                    .accessibilityLabel(String(localized: "Select item:") + " " + item.name)
+                                    .accessibilityValue(model.extractionSelection.contains(item.path) ? String(localized: "Selected") : String(localized: "Not selected"))
+                                    .accessibilityIdentifier("select.\(item.path)")
+                                }
                             if item.isDirectory {
                                 Button { model.enterFolder(item.path) } label: {
                                     Label(item.name, systemImage: "folder").foregroundStyle(.primary)
                                 }.accessibilityIdentifier("folder.\(item.path)")
+                                .contextMenu {
+                                    Button { requestExtraction(.folder(item.path)) } label: {
+                                        Label("Extract entire folder", image: ArchiveActionIcon.extract)
+                                    }.disabled(model.isBusy)
+                                }
                             } else {
                                 NavigationLink(value: item.path) {
                                     HStack {
@@ -119,6 +165,7 @@ struct RootView: View {
                                         }
                                     }
                                 }.accessibilityIdentifier("entry.\(item.path)")
+                            }
                             }
                         }
                     }
@@ -142,7 +189,9 @@ struct RootView: View {
             .toolbar { ToolbarItem(placement: .primaryAction) { openButton } }
         } detail: {
             EntryDetailView(model: model)
-                .toolbar { ArchiveToolbar(model: model) { isDestinationChoicePresented = true } }
+                .toolbar { ArchiveToolbar(model: model) {
+                    if let entry = model.selectedEntry { requestExtraction(.entry(entry.path)) }
+                } }
         }
         .navigationSplitViewStyle(.balanced)
     }
@@ -150,6 +199,10 @@ struct RootView: View {
     private var openButton: some View {
         Button { model.isImporterPresented = true } label: { Label("Open", systemImage: "folder.badge.plus") }
             .disabled(model.isBusy).accessibilityIdentifier("openArchive")
+    }
+    private func requestExtraction(_ scope: ArchiveExtractionScope) {
+        extractionScope = scope
+        isDestinationChoicePresented = true
     }
 }
 
@@ -190,7 +243,7 @@ struct EntryDetailView: View {
                     #if DUO_SDK
                     if #available(iOS 27.1, *) {
                         ArrangementView {
-                            EntryPreview(entry: entry, text: model.previewText)
+                            EntryPreview(entry: entry, text: model.previewText, media: model.mediaPreview, unlock: { model.select(entry.path) })
                         } secondary: { metadata(entry) }
                         .arrangementViewStyle(.split)
                     } else { wideDetail(entry) }
@@ -200,7 +253,7 @@ struct EntryDetailView: View {
                 } else {
                     // Both preview and actions stay reachable at compact widths.
                     Form {
-                        Section("Preview") { EntryPreview(entry: entry, text: model.previewText).frame(minHeight: 180) }
+                        Section("Preview") { EntryPreview(entry: entry, text: model.previewText, media: model.mediaPreview, unlock: { model.select(entry.path) }).frame(minHeight: 180) }
                         fields(entry)
                     }
                 }
@@ -213,7 +266,7 @@ struct EntryDetailView: View {
     private func metadata(_ entry: ArchiveEntry) -> some View { Form { fields(entry) } }
     private func wideDetail(_ entry: ArchiveEntry) -> some View {
         HStack(spacing: 0) {
-            EntryPreview(entry: entry, text: model.previewText).frame(maxWidth: .infinity)
+            EntryPreview(entry: entry, text: model.previewText, media: model.mediaPreview, unlock: { model.select(entry.path) }).frame(maxWidth: .infinity)
             metadata(entry).frame(maxWidth: .infinity)
         }
     }
@@ -245,15 +298,58 @@ struct EntryDetailView: View {
 struct EntryPreview: View {
     let entry: ArchiveEntry
     let text: String?
+    @ObservedObject var media: MediaPreviewModel
+    let unlock: () -> Void
+    @State private var scrubPosition = 0.0
+    @State private var scrubbing = false
     var body: some View {
-        if let text {
+        if media.phase == .locked {
+            VStack(spacing: 12) {
+                Label("Password required", systemImage: "lock.fill").accessibilityIdentifier("previewLocked")
+                if let message = media.message { Text(message).font(.footnote) }
+                else { Button("Unlock preview", action: unlock).accessibilityIdentifier("unlockPreview") }
+            }.padding()
+        } else if media.phase == .preparing {
+            ProgressView("Preparing preview…").accessibilityIdentifier("mediaPreparation").padding()
+        } else if media.phase == .failed {
+            ContentUnavailableView("Preview unavailable", systemImage: "doc", description: Text(media.message ?? ""))
+        } else if media.phase == .ready {
+            VStack(spacing: 12) {
+                if let image = media.image {
+                    Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 360).accessibilityHidden(false).accessibilityLabel("Decoded media image").accessibilityIdentifier("mediaImage")
+                } else if media.kind == .audio { Image(systemName: "waveform").font(.largeTitle).padding() }
+                if media.kind != .image {
+                    Button(action: media.togglePlaying) {
+                        Label(media.isPlaying ? "Pause" : "Play", systemImage: media.isPlaying ? "pause.fill" : "play.fill")
+                    }.accessibilityIdentifier("mediaPlayPause")
+                    if let duration = media.info?.duration, duration > 0 {
+                        Slider(value: Binding(get: { scrubbing ? scrubPosition : min(media.position, duration) },
+                            set: { scrubPosition = $0 }), in: 0...duration, onEditingChanged: { editing in
+                                if editing { scrubPosition = media.position; scrubbing = true }
+                                else { scrubbing = false; media.seek(to: scrubPosition) }
+                            }).accessibilityLabel("Playback position").accessibilityIdentifier("mediaSeek")
+                    }
+                    Text("\(time(media.position)) / \(time(media.info?.duration ?? 0))")
+                        .monospacedDigit().accessibilityIdentifier("mediaPosition")
+                }
+                if let info = media.info {
+                    Text([info.videoCodec, info.audioCodec].filter { !$0.isEmpty }.joined(separator: " / "))
+                        .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("mediaCodec")
+                }
+            }.padding()
+        } else if let text {
             ScrollView {
                 Text(verbatim: text).font(.body.monospaced()).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading).padding()
             }.accessibilityIdentifier("textPreview")
         } else {
-            ContentUnavailableView("Preview unavailable", systemImage: "doc", description: Text("Small supported UTF-8 text files can be previewed. Extract other supported files to view them in Files."))
+            ContentUnavailableView("Preview unavailable", systemImage: "doc", description: Text("Preview supports bounded text, images, audio and video using open-source decoders. Extract unsupported files to view them elsewhere."))
         }
+    }
+    private func time(_ seconds: Double) -> String {
+        let value = max(0, Int(seconds.isFinite ? min(seconds, 86400) : 0))
+        return String(format: "%d:%02d", value / 60, value % 60)
     }
 }
 
@@ -291,8 +387,8 @@ struct InformationView: View {
             }
             Section("Storage access") {
                 Text("Read archives from any provider available in Files, including external storage.")
-                Text("Write to local storage, an external drive, or iCloud. Other cloud drives are read-only. A new folder is created; existing files are never replaced.")
-                Text("Unidentified locations are read-only. If access is revoked or a drive is disconnected, choose the folder again.")
+                Text("Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced.")
+                Text("If access is revoked or a drive is disconnected, choose the folder again. A cloud provider may finish uploading after the local write completes.")
             }
             #if DEBUG
             Section("Layout diagnostics") {

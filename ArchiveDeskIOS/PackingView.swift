@@ -66,7 +66,7 @@ struct PackingView: View {
             Button("Choose folder in Files…") { Task { @MainActor in destinationPresented = true } }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Write to local storage, an external drive, or iCloud. Other cloud drives are read-only. A new folder is created; existing files are never replaced.")
+            Text("Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced.")
         }
         .sheet(isPresented: $destinationPresented) {
             DestinationFolderPicker { folder in

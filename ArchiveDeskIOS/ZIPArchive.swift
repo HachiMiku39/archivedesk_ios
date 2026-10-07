@@ -217,17 +217,7 @@ struct ZIPArchive: Sendable {
     guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
       throw DestinationFailure.invalidDirectory
     }
-    let capacity = try outputRoot.resourceValues(forKeys: [
-      .volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey,
-    ])
-    // Some hosts/providers return zero for the optional important-usage value
-    // even with free space. The ordinary value is the non-purgeable fallback.
-    let important = capacity.volumeAvailableCapacityForImportantUsage
-    let available =
-      (important ?? 0) > 0 ? important : capacity.volumeAvailableCapacity.map(Int64.init)
-    if let available, UInt64(max(0, available)) < total + 16 * 1_024 * 1_024 {
-      throw ArchiveFailure.capacity
-    }
+    try StorageBudget.require(total + 16 * 1_024 * 1_024, at: outputRoot)
     let staging = outputRoot.appendingPathComponent(
       ".ArchiveDesk-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
@@ -243,9 +233,7 @@ struct ZIPArchive: Sendable {
         var offset = try payloadOffset(entry, reader: reader)
         try FileManager.default.createDirectory(
           at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard FileManager.default.createFile(atPath: output.path, contents: nil) else {
-          throw ArchiveFailure.capacity
-        }
+        try StorageBudget.createFile(at: output)
         let handle = try FileHandle(forWritingTo: output)
         do {
           if entry.compressionMethod == 8 {
@@ -306,13 +294,13 @@ struct ZIPArchive: Sendable {
       _ = try payloadOffset(entry, reader: reader)
       var bytes = Data()
       try NativeArchiveReader.stream(entry, from: url) { bytes.append($0) }
-      return String(data: bytes, encoding: .utf8)
+      return ArchiveTextPreview.decode(bytes)
     }
     let bytes = try reader.read(
       at: payloadOffset(entry, reader: reader), count: Int(entry.uncompressedSize))
     try Task.checkCancellation()
     guard CRC32.checksum(bytes) == entry.crc32 else { throw ArchiveFailure.crcMismatch(entry.path) }
-    return String(data: bytes, encoding: .utf8)
+    return ArchiveTextPreview.decode(bytes)
   }
 }
 

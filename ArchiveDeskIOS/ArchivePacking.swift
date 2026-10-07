@@ -29,11 +29,12 @@ struct PackingSource: Identifiable, Sendable {
 enum PackingInput {
     /// One immutable private tree per picked root. The provider grant is never
     /// retained after copying; adding sources from another provider is independent.
-    static func snapshot(_ url: URL, name: String, coordinated: Bool = true) throws -> PackingSource {
+    static func snapshot(_ url: URL, name: String, coordinated: Bool = true, temporaryRoot: URL = FileManager.default.temporaryDirectory,
+                         progress: @escaping ArchiveProgress = { _, _ in }) throws -> PackingSource {
         _ = try ArchiveSafety.safeRelativePath(name)
         guard !name.contains("/") else { throw ArchiveFailure.unsafePath(name) }
         let id = UUID()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-Pack-\(id)", isDirectory: true)
+        let directory = temporaryRoot.appendingPathComponent("ArchiveDesk-Pack-\(id)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         var succeeded = false
         defer { if !succeeded { try? FileManager.default.removeItem(at: directory) } }
@@ -41,7 +42,7 @@ enum PackingInput {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         var result: Result<[PackingItem], Error>?
         var coordinationError: NSError?
-        let copy: (URL) -> Void = { readable in result = Result { try copyTree(readable, name: name, into: directory) } }
+        let copy: (URL) -> Void = { readable in result = Result { try copyTree(readable, name: name, into: directory, progress: progress) } }
         if coordinated {
             NSFileCoordinator().coordinate(readingItemAt: url, options: [.withoutChanges], error: &coordinationError, byAccessor: copy)
         } else { copy(url) } // Host tests only; the app always coordinates picked URLs.
@@ -66,22 +67,23 @@ enum PackingInput {
             _ = try ArchiveSafety.safeRelativePath(candidate)
             if !keys.contains(key(candidate)) { return candidate }
         }
-        throw ArchiveFailure.capacity
+        throw ArchiveFailure.resourceLimit("100,000 duplicate source names")
     }
 
-    private static func copyTree(_ root: URL, name: String, into directory: URL) throws -> [PackingItem] {
+    private static func copyTree(_ root: URL, name: String, into directory: URL, progress: @escaping ArchiveProgress) throws -> [PackingItem] {
         let fm = FileManager.default
         let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL.pathComponents
         var pending: [(URL, String)] = [(root, name)]
         var items: [PackingItem] = []
         var total: UInt64 = 0
         var pathBytes = 0
+        let meter = ExtractionProgress(total: 0, callback: progress)
         while let (inputURL, path) = pending.popLast() {
             try Task.checkCancellation()
             _ = try ArchiveSafety.safeRelativePath(path)
-            guard items.count < ArchiveSafety.maximumEntries else { throw ArchiveFailure.capacity }
+            guard items.count < ArchiveSafety.maximumEntries else { throw ArchiveFailure.resourceLimit("100,000 source entries") }
             pathBytes += path.utf8.count
-            guard pathBytes <= 32 * 1024 * 1024 else { throw ArchiveFailure.capacity }
+            guard pathBytes <= 32 * 1024 * 1024 else { throw ArchiveFailure.resourceLimit("32 MiB source path metadata") }
             let values = try inputURL.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
             guard values.isSymbolicLink != true,
                   inputURL.resolvingSymlinksInPath().standardizedFileURL.pathComponents.starts(with: canonicalRoot) else {
@@ -92,7 +94,7 @@ enum PackingInput {
                 try fm.createDirectory(at: output, withIntermediateDirectories: false)
                 items.append(PackingItem(url: output, path: path + "/", size: 0, isDirectory: true))
                 let children = try fm.contentsOfDirectory(at: inputURL, includingPropertiesForKeys: nil).sorted { $0.lastPathComponent < $1.lastPathComponent }
-                guard children.count <= ArchiveSafety.maximumEntries - items.count - pending.count else { throw ArchiveFailure.capacity }
+                guard children.count <= ArchiveSafety.maximumEntries - items.count - pending.count else { throw ArchiveFailure.resourceLimit("100,000 source entries") }
                 for child in children.reversed() { pending.append((child, path + "/" + child.lastPathComponent)) }
             } else {
                 guard values.isRegularFile == true else { throw ArchiveFailure.unsafePath(path) }
@@ -103,11 +105,10 @@ enum PackingInput {
                 var info = stat()
                 guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size >= 0 else { throw ArchiveFailure.unsafePath(path) }
                 let size = UInt64(info.st_size)
-                guard size <= ArchiveSafety.maximumExpandedBytes - total else { throw ArchiveFailure.capacity }
+                guard size <= ArchiveSafety.maximumExpandedBytes - total else { throw ArchiveFailure.resourceLimit("256 GiB source bytes") }
                 total += size
-                if let capacity = try directory.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity,
-                   UInt64(max(0, capacity)) < size + 16 * 1024 * 1024 { throw ArchiveFailure.capacity }
-                guard fm.createFile(atPath: output.path, contents: nil) else { throw ArchiveFailure.capacity }
+                try StorageBudget.require(size + 16 * 1024 * 1024, at: directory)
+                try StorageBudget.createFile(at: output)
                 let target = try FileHandle(forWritingTo: output)
                 defer { try? target.close() }
                 var written: UInt64 = 0
@@ -118,6 +119,7 @@ enum PackingInput {
                     guard UInt64(data.count) <= size - written else { throw ArchiveFailure.malformed("The source file changed while being copied.") }
                     try autoreleasepool { try target.write(contentsOf: data) }
                     written += UInt64(data.count)
+                    meter.advance(data.count)
                 }
                 guard written == size else { throw ArchiveFailure.malformed("The source file changed while being copied.") }
                 try target.synchronize()
@@ -125,6 +127,7 @@ enum PackingInput {
             }
         }
         _ = try ArchiveSafety.validate(entries: items.lazy.map(\.entry), archiveBytes: 0)
+        meter.complete()
         return items
     }
 }
@@ -137,25 +140,31 @@ enum ArchivePacker {
         let filename = name + "." + format.rawValue
         _ = try ArchiveSafety.safeRelativePath(filename)
         let items = sources.lazy.flatMap(\.items)
-        guard items.reduce(0, { $0 + $1.path.utf8.count }) <= 32 * 1024 * 1024 else { throw ArchiveFailure.capacity }
+        guard items.reduce(0, { $0 + $1.path.utf8.count }) <= 32 * 1024 * 1024 else { throw ArchiveFailure.resourceLimit("32 MiB source path metadata") }
         let total = try ArchiveSafety.validate(entries: items.lazy.map(\.entry), archiveBytes: 0)
         try Task.checkCancellation()
-        let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .volumeAvailableCapacityKey])
+        let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { throw DestinationFailure.invalidDirectory }
         // Include per-entry overhead and headroom; disk-write failures still roll back.
         let overhead = UInt64(items.count) * 8192 + 16 * 1024 * 1024
-        if let capacity = values.volumeAvailableCapacity, UInt64(max(0, capacity)) < total + overhead { throw ArchiveFailure.capacity }
+        try StorageBudget.require(total + overhead, at: outputRoot)
         let stage = outputRoot.appendingPathComponent(".ArchiveDesk-Pack-\(UUID())", isDirectory: true)
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: false)
         do {
         let file = stage.appendingPathComponent(filename)
         let fd = Darwin.open(file.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
-        guard fd >= 0 else { throw ArchiveFailure.capacity }
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         let output = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         defer { try? output.close() }
-        guard let locale = archivedesk_codec_enter_utf8_locale() else { throw ArchiveFailure.capacity }
+        errno = 0
+        guard let locale = archivedesk_codec_enter_utf8_locale() else {
+            throw ArchiveFailure.codecInitialization("UTF-8 locale", errno, UInt64(archivedesk_codec_live_bytes()))
+        }
         defer { archivedesk_codec_leave_utf8_locale(locale) }
-        guard let writer = archive_write_new() else { throw ArchiveFailure.capacity }
+        errno = 0
+        guard let writer = archive_write_new() else {
+            throw ArchiveFailure.codecInitialization("archive_write_new", errno, UInt64(archivedesk_codec_live_bytes()))
+        }
         defer { archive_write_free(writer) }
         func check(_ status: Int32) throws {
             guard status == ARCHIVE_OK else {
@@ -172,7 +181,10 @@ enum ArchivePacker {
         progress(0, total)
         for item in items {
             try Task.checkCancellation()
-            guard let entry = archive_entry_new() else { throw ArchiveFailure.capacity }
+            errno = 0
+            guard let entry = archive_entry_new() else {
+                throw ArchiveFailure.codecInitialization("archive_entry_new", errno, UInt64(archivedesk_codec_live_bytes()))
+            }
             defer { archive_entry_free(entry) }
             item.path.withCString { archive_entry_set_pathname_utf8(entry, $0) }
             archive_entry_set_filetype(entry, item.isDirectory ? UInt32(S_IFDIR) : UInt32(S_IFREG))

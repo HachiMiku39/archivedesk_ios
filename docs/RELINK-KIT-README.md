@@ -2,7 +2,7 @@
 
 This kit matches ArchiveDesk-@VERSION@-unsigned.ipa (build @BUILD@),
 SHA-256 `@IPA_SHA@`. It contains the exact arm64 Release application objects
-in original link order, matching ArchiveRar/ArchiveCodecs static libraries and
+in original link order, matching ArchiveRar/ArchiveCodecs/ArchiveMedia static libraries and
 unsigned app resources without the executable. No Apple SDK, credentials,
 certificates or provisioning profiles are included.
 
@@ -12,7 +12,8 @@ preserve the Duo-specific public APIs. A newer SDK compiles the project's
 standard layout branch instead; it is not the identical original build.
 
 `CodecNotices.txt` retains full third-party terms. `modified-rar-sources.tar.gz`
-contains all five modified upstream files. The complete corresponding source,
+contains all six modified upstream files, including the UDF metadata limits in
+`UdfIn.cpp`. The complete corresponding source,
 pristine dependency archives, bridges and build recipes are provided separately
 as `ArchiveDesk-@VERSION@-source.tar.gz` in the same Release. See that source's
 `docs/RAR-LICENSE-AND-RELINK.md` for modifications and limitations.
@@ -39,6 +40,18 @@ XCFramework, edit its sources/build recipe and rebuild with `scripts/build-codec
 in a clean build directory. Pass the replacement library as relink.sh's second
 argument. Respect all licenses, including the unRAR restriction; no RAR writer
 or closed-source RARLAB CLI is included.
+
+ArchiveMedia contains source-built FFmpeg 9.0.2 (LGPL-2.1-or-later configuration)
+and dav1d 1.5.4 (BSD-2-Clause), with GPL/version3/nonfree components disabled.
+For a modified media library, unpack the pristine pinned archives into
+`work/media-sources`, edit those sources or `Vendor/MediaSupport`, and run
+`MEDIA_SLICES=ios-arm64 zsh scripts/build-media-codecs.sh`. Back up the existing
+media XCFramework first, as the build recipe refuses to replace it. Pass the
+resulting `work/media-codecs/ios-arm64/libArchiveMedia.a` as relink.sh's third
+argument (first and second arguments may be the kit's original libraries).
+The source recipe disables compressed-system-codec and network backends;
+Apple audio output renders only already-decoded PCM. See the source's
+`docs/MEDIA-PREVIEW.md` for actual support and bounds.
 
 The link script retains target, SDK, object/library order, Swift runtime paths,
 system libraries and dead-strip flags, but omits diagnostic-only absolute build

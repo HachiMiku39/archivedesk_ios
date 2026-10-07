@@ -1,6 +1,6 @@
 # Files access policy
 
-Updated 2026-10-04. ZIP stored/Deflate and integrated native formats share this same output policy. Encryption is not implemented.
+Updated 2026-10-06 for 0.3.2 development. Extraction and ZIP/TAR packing share this output policy. Password-protected RAR is supported; encrypted ZIP/7z is not.
 
 ## Input
 
@@ -10,24 +10,24 @@ The system Files importer accepts archives from user-granted local folders, exte
 
 Extract offers app Documents/Extractions or a system folder picker (`.folder`, `asCopy: false`). The picker starts at app Documents but users can browse Files. Present the system controller without a custom header that conflicts with Duo's camera-safe areas. Some compact presentations omit their own close action, so a native Cancel button is supplied in a bottom safe-area inset. System close, outside dismissal where available, and the explicit Cancel action retain preview/navigation and do not extract. The footer consumes safe-area space instead of overlaying the provider's native controls.
 
-Classify before any test write or filesystem mutation:
+Use iOS authorization and provider write capability, not storage provenance:
 
-- Canonical path-component containment within app Documents: writable.
-- Foundation `isUbiquitousItem == true`: recognized iCloud destination.
-- `volumeIsLocal == true && volumeIsInternal == false`: recognized external local volume.
-- Anything else: reject writing. Local-volume metadata alone does not identify local storage; cloud providers cache files locally.
+- App Documents may be used directly within the app sandbox.
+- Other destinations must come from the system directory picker. This includes local Downloads, USB storage, iCloud, third-party providers and SMB when the provider supports directory access and writing.
+- Unknown volume/provider metadata does not reject a selected directory. Descriptive labels such as iCloud or external volume do not confer access or bypass the sandbox.
+- The user explicitly removed the previous third-party-cloud read-only product restriction on 2026-10-06.
 
 Reject files, symbolic-link roots, known read-only folders and missing/unmounted destinations. Revalidate inside coordination. Metadata permits a write attempt, not a guarantee that I/O will succeed.
 
 Hold the security grant throughout the coordinated directory write, extraction, CRC verification, same-volume rename and rollback. Stream directly into a fresh `.ArchiveDesk-UUID` staging folder on the chosen volume. Publish `Extracted-UUID` only after all selected entries pass. Never merge, replace or delete existing content. Cleanup removes only the owned staging folder. A failed rollback reports its exact unfinished folder; it does not claim cleanup succeeded. No persistent bookmark/standing grant is retained.
 
-Show a location receipt, not a live external document. View the output in Files. Unrestricted ShareLink/fileExporter writes are absent so they cannot bypass the cloud policy. Completed iCloud publication is not confirmed cloud-server upload.
+Show a location receipt, not a live external document. View the output in Files. Completed publication into a provider directory is not confirmation of cloud-server upload. No additional unrestricted export path is introduced by this change.
 
 ## Limitation
 
 Public iOS APIs do not expose universal provider identity for an arbitrary picker URL. `NSFileProviderManager.getIdentifierForUserVisibleFile` is limited to the caller's own provider/domain. Third-party cached items can have ordinary local-volume properties.
 
-The requested combination of **all Files read/write areas** and **all non-iCloud clouds read-only** is therefore not fully achieved. This build fails closed for unidentified locations, including other apps' local Documents and SMB shares. No guessed provider paths, private identifiers or private APIs are used. Those local areas need a separately verified provenance design; a writable URL alone must not relax the policy.
+Universal provider identification is not required by the revised policy. No guessed provider paths, private identifiers, manual claims of being local, or private APIs are used. A picked URL is not a promise of successful I/O: access can be revoked, a device can disconnect, or a provider can reject writes. Actual coordination/write errors are surfaced and owned staging cleanup is attempted without modifying pre-existing content.
 
 ## Verification
 

@@ -9,7 +9,7 @@ enum FormatVerification {
         let expected = try Data(contentsOf: fixtures.appendingPathComponent("input/Notes.md"))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-Formats-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        for name in ["sample.7z", "lzma.7z", "deflate.zip", "sample.tar", "sample.tar.gz", "sample.tar.bz2", "sample.tar.xz", "Notes.md.gz", "Notes.md.bz2", "Notes.md.xz", "Notes.md.lzma"] {
+        for name in ["sample.7z", "lzma.7z", "deflate.zip", "sample.tar", "sample.tar.gz", "sample.tar.bz2", "sample.tar.xz", "Notes.md.gz", "Notes.md.bz2", "Notes.md.xz", "Notes.md.lzma", "sample.udf.iso"] {
             let originalLocale = uselocale(nil)
             let archive = try ArchiveContainer.open(url: fixtures.appendingPathComponent(name))
             if name == "deflate.zip" { precondition(archive.entries.first(where: { $0.path == "Notes.md" })?.compressionMethod == 8) }
@@ -21,7 +21,7 @@ enum FormatVerification {
             precondition(progress.read().bytes == archive.entries.reduce(0) { $0 + $1.uncompressedSize }, "Decoded-output progress: \(name)")
             let bytes = try Data(contentsOf: output.appendingPathComponent("Notes.md"))
             precondition(bytes == expected, "Bytes \(name)")
-            if ["sample.7z", "deflate.zip"].contains(name) {
+            if ["sample.7z", "deflate.zip", "sample.udf.iso"].contains(name) {
                 for filename in ["中文.txt", "日本語.txt"] {
                     precondition(archive.entries.contains(where: { $0.path == filename }), "Unicode index")
                     let original = try Data(contentsOf: fixtures.appendingPathComponent("input/" + filename))
@@ -129,6 +129,23 @@ enum FormatVerification {
         let cancelledCleanly = await cancellation.value
         precondition(cancelledCleanly, "Cancelled initializer cleaned exactly once")
         print("PASS: cancelled native initializer releases exactly once")
+        let udfCancellation = Task.detached {
+            while !Task.isCancelled { await Task.yield() }
+            do { _ = try RARArchive.open(url: fixtures.appendingPathComponent("sample.udf.iso"), udf: true); return false }
+            catch is CancellationError { return archivedesk_codec_live_bytes() == 0 }
+            catch { return false }
+        }
+        udfCancellation.cancel()
+        let udfCancelled = await udfCancellation.value
+        precondition(udfCancelled, "UDF cancelled initializer")
+        print("PASS: cancelled UDF initializer")
+        var fakeUDF = Data(repeating: 0, count: 40 * 2048)
+        fakeUDF.replaceSubrange((18 * 2048 + 1)..<(18 * 2048 + 6), with: Data("NSR02".utf8))
+        let fakeUDFURL = root.appendingPathComponent("damaged.udf")
+        try fakeUDF.write(to: fakeUDFURL)
+        do { _ = try ArchiveContainer.open(url: fakeUDFURL); fatalError("Accepted fake UDF") }
+        catch { precondition(archivedesk_codec_live_bytes() == 0) }
+        print("PASS: damaged UDF rejected rather than falling back to ISO9660")
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum ArchiveSafety {
     static let maximumEntries = 100_000
@@ -29,7 +30,7 @@ enum ArchiveSafety {
                 }
                 components[normalizedPrefix] = rawPrefix
             }
-            guard entry.uncompressedSize <= maximumExpandedBytes - total else { throw ArchiveFailure.capacity }
+            guard entry.uncompressedSize <= maximumExpandedBytes - total else { throw ArchiveFailure.resourceLimit("256 GiB total expanded/input bytes") }
             total += entry.uncompressedSize
         }
         for name in normalized {
@@ -64,5 +65,37 @@ enum ArchiveSafety {
     static func outputPath(_ path: String) throws -> String {
         _ = try safeRelativePath(path)
         return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+}
+
+/// Capacity is an advisory preflight, never a reservation. Refresh URL values
+/// and include purgeable space for this user-requested write. Unsupported or
+/// missing metadata is not a claim that the volume has zero free bytes.
+enum StorageBudget {
+    static func available(important: Int64?, ordinary: Int64?, fileSystem: UInt64?) -> UInt64? {
+        if let important, important > 0 { return UInt64(important) }
+        let candidates = [ordinary.flatMap { $0 > 0 ? UInt64($0) : nil }, fileSystem].compactMap { $0 }
+        if let positive = candidates.max(), positive > 0 { return positive }
+        if ordinary == 0 || fileSystem == 0 { return 0 }
+        return nil
+    }
+    static func require(_ bytes: UInt64, at url: URL) throws {
+        var fresh = url; fresh.removeAllCachedResourceValues()
+        let values = try? fresh.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+        var fs = statfs()
+        let valid = url.path.withCString { statfs($0, &fs) == 0 }
+        let blocks = UInt64(fs.f_bavail)
+        let blockBytes = UInt64(fs.f_bsize)
+        let (free, overflow) = blocks.multipliedReportingOverflow(by: blockBytes)
+        let fileSystem: UInt64? = valid && !overflow ? free : nil
+        if let available = available(important: values?.volumeAvailableCapacityForImportantUsage,
+                                     ordinary: values?.volumeAvailableCapacity.map(Int64.init), fileSystem: fileSystem), available < bytes {
+            throw ArchiveFailure.storageSpace(bytes, available)
+        }
+    }
+    static func createFile(at url: URL) throws {
+        let fd = url.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600) }
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard Darwin.close(fd) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     }
 }

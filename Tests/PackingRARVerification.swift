@@ -32,6 +32,61 @@ enum PackingRARVerification {
             precondition(firstBytes == Data("first source 日本語\n".utf8))
             precondition(otherBytes == Data("second source\n".utf8))
             print("PASS: multi-source \(format) creation / byte-for-byte round trip / empty directory")
+            let selectedFolder = ArchiveExtractionScope.folder("SourceA").entries(in: archive.entries)
+            let folderOutput = try archive.extract(paths: Set(selectedFolder.map(\.path)), outputRoot: root)
+            precondition(FileManager.default.fileExists(atPath: folderOutput.appendingPathComponent("SourceA/空文件夹").path))
+            precondition(!FileManager.default.fileExists(atPath: folderOutput.appendingPathComponent("other.txt").path))
+            let selectedFile = ArchiveExtractionScope.items(["SourceA/中文.txt"]).entries(in: archive.entries)
+            let fileOutput = try archive.extract(paths: Set(selectedFile.map(\.path)), outputRoot: root)
+            let selectedBytes = try Data(contentsOf: fileOutput.appendingPathComponent("SourceA/中文.txt"))
+            precondition(selectedBytes == firstBytes)
+            precondition(!FileManager.default.fileExists(atPath: fileOutput.appendingPathComponent("SourceA/空文件夹").path))
+            precondition(!FileManager.default.fileExists(atPath: fileOutput.appendingPathComponent("other.txt").path))
+            print("PASS: \(format) folder/subset extraction preserves empty directories and excludes unselected files")
+        }
+        let udfURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("work/format-fixtures/sample.udf.iso")
+        let udf = try ArchiveContainer.open(url: udfURL)
+        precondition(udf.formatName == "UDF")
+        let udfOutput = try udf.extract(outputRoot: root)
+        let udfSource = try PackingInput.snapshot(udfOutput, name: "UDF", coordinated: false, temporaryRoot: root)
+        let udfZIP = try ArchivePacker.create(sources: [udfSource], format: .zip, name: "UDF-roundtrip", in: root)
+        let udfPacked = try ArchiveContainer.open(url: udfZIP)
+        let udfUnpacked = try udfPacked.extract(outputRoot: root)
+        for entry in udf.entries where !entry.isDirectory {
+            let original = try Data(contentsOf: udfOutput.appendingPathComponent(entry.path))
+            let actual = try Data(contentsOf: udfUnpacked.appendingPathComponent("UDF/" + entry.path))
+            precondition(original == actual)
+        }
+        print("PASS: independent small UDF -> ZIP -> extracted byte-for-byte round trip")
+        let local20 = root.appendingPathComponent("Local20MiB", isDirectory: true)
+        try FileManager.default.createDirectory(at: local20, withIntermediateDirectories: false)
+        let payload20 = local20.appendingPathComponent("payload.bin")
+        try StorageBudget.createFile(at: payload20)
+        let localHandle = try FileHandle(forWritingTo: payload20)
+        var block20 = Data(count: 256 * 1024), seed20: UInt32 = 0x12345678
+        block20.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
+            for index in bytes.indices {
+                seed20 ^= seed20 << 13; seed20 ^= seed20 >> 17; seed20 ^= seed20 << 5
+                bytes[index] = UInt8(truncatingIfNeeded: seed20)
+            }
+        }
+        for _ in 0..<80 { try localHandle.write(contentsOf: block20) }
+        try localHandle.close()
+        let source20 = try PackingInput.snapshot(local20, name: "Local20MiB", coordinated: false, temporaryRoot: root)
+        for format in PackingFormat.allCases {
+            let packed20 = try ArchivePacker.create(sources: [source20], format: format, name: "Local20MiB", in: root)
+            let decoded20 = try ArchiveContainer.open(url: packed20)
+            let output20 = try decoded20.extract(outputRoot: root)
+            let input20 = try FileHandle(forReadingFrom: output20.appendingPathComponent("Local20MiB/payload.bin"))
+            for _ in 0..<80 {
+                let restoredBlock = try input20.read(upToCount: block20.count)
+                precondition(restoredBlock == block20)
+            }
+            let trailingByte = try input20.read(upToCount: 1)
+            precondition(trailingByte?.isEmpty != false)
+            try input20.close()
+            precondition(archivedesk_codec_live_bytes() == 0)
+            print("PASS: 20 MiB local folder -> \(format) -> extraction, bounded block comparison and released allocations")
         }
         let renamed = try PackingInput.uniqueName("OTHER.txt", used: ["other.txt"])
         precondition(renamed == "OTHER (2).txt")

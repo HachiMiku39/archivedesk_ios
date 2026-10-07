@@ -3,6 +3,10 @@ set -eu
 cd "${0:A:h:h}"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode-27.1-beta.app/Contents/Developer}"
 mkdir -p work/bin work/ModuleCache work/rar-fixtures work/codec-sources
+if [[ ! -f work/format-fixtures/sample.udf.iso ]]; then
+  mkdir -p work/format-fixtures
+  hdiutil makehybrid -udf -o work/format-fixtures/sample.udf Tests/Fixtures/Input
+fi
 [[ -d work/codec-sources/libarchive-3.8.9 ]] || tar -xJf Vendor/Sources/libarchive-3.8.9.tar.xz -C work/codec-sources
 for task_version in 4 5; do
   for task_suffix in encrypted encrypted_filenames solid_encrypted solid_encrypted_filenames; do

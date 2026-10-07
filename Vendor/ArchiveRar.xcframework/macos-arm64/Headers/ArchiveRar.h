@@ -15,8 +15,10 @@ typedef struct {
     int directory, encrypted, unsafe, has_crc;
 } ADREntry;
 enum { ADR_OK=0, ADR_PASSWORD_REQUIRED=1, ADR_PASSWORD_OR_DAMAGE=2,
-       ADR_UNSUPPORTED=3, ADR_CANCELLED=4, ADR_CAPACITY=5, ADR_MALFORMED=6 };
+       ADR_UNSUPPORTED=3, ADR_CANCELLED=4, ADR_CAPACITY=5, ADR_MALFORMED=6, ADR_RESOURCE_LIMIT=7 };
 void *adr_open(const char *path, const char *password, ADRContinue proceed, void *context, int *status);
+// Read-only UDF image handler; shares bounded streaming and cancellation APIs.
+void *adr_open_udf(const char *path, ADRContinue proceed, void *context, int *status);
 void adr_close(void *handle);
 uint32_t adr_count(void *handle);
 int adr_headers_encrypted(void *handle);

@@ -1,5 +1,7 @@
 
+
 import Foundation
+import Darwin
 import CArchive
 
 /// Reader instances never escape their synchronous creating thread. The vendor
@@ -11,10 +13,15 @@ final class NativeArchiveReader {
     private let locale: UnsafeMutableRawPointer
     init(url: URL, zipHeaderCharset: String? = nil) throws {
         self.url = url
-        guard let locale = archivedesk_codec_enter_utf8_locale() else { throw ArchiveFailure.capacity }
+        errno = 0
+        guard let locale = archivedesk_codec_enter_utf8_locale() else {
+            throw ArchiveFailure.codecInitialization("UTF-8 locale", errno, UInt64(archivedesk_codec_live_bytes()))
+        }
+        errno = 0
         guard let pointer = archive_read_new() else {
+            let failure = ArchiveFailure.codecInitialization("archive_read_new", errno, UInt64(archivedesk_codec_live_bytes()))
             archivedesk_codec_leave_utf8_locale(locale)
-            throw ArchiveFailure.capacity
+            throw failure
         }
         self.locale = locale
         self.pointer = pointer
@@ -116,7 +123,7 @@ final class NativeArchiveReader {
                 throw ArchiveFailure.malformed(message)
             }
             if size == 0 { break }
-            guard UInt64(size) <= limit - count else { throw ArchiveFailure.capacity }
+            guard UInt64(size) <= limit - count else { throw ArchiveFailure.resourceLimit("Expanded output exceeds its allowed byte count") }
             count += UInt64(size)
             try autoreleasepool { try body(Data(bytes: buffer, count: size)) }
         }
@@ -165,13 +172,24 @@ struct MultiFormatArchive: Sendable {
     let url: URL
     let entries: [ArchiveEntry]
     let formatName: String
+    var udfBackend: RARArchive? = nil
     static func open(url: URL) throws -> Self {
+        if ["iso", "udf", "img"].contains(url.pathExtension.lowercased()) {
+            let image = try FileHandle(forReadingFrom: url)
+            defer { try? image.close() }
+            try image.seek(toOffset: 16 * 2048)
+            let recognition = try image.read(upToCount: 16 * 2048) ?? Data()
+            if hasUDFRecognition(recognition) {
+                let backend = try RARArchive.open(url: url, udf: true)
+                return Self(url: url, entries: backend.entries, formatName: "UDF", udfBackend: backend)
+            }
+        }
         let reader = try NativeArchiveReader(url: url)
         var entries: [ArchiveEntry] = []
         var nameBytes = 0
         var headers = 0
         while let entry = try reader.next() {
-            guard headers < ArchiveSafety.maximumEntries else { throw ArchiveFailure.capacity }
+            guard headers < ArchiveSafety.maximumEntries else { throw ArchiveFailure.resourceLimit("100,000 archive headers") }
             headers += 1
             let path = try reader.path(entry)
             if archivedesk_entry_is_directory(entry) != 0 && (path.isEmpty || path == ".") {
@@ -181,10 +199,10 @@ struct MultiFormatArchive: Sendable {
                 try reader.check(archive_read_data_skip(reader.pointer))
                 continue
             }
-            guard entries.count < ArchiveSafety.maximumEntries else { throw ArchiveFailure.capacity }
+            guard entries.count < ArchiveSafety.maximumEntries else { throw ArchiveFailure.resourceLimit("100,000 archive entries") }
             let value = try reader.metadata(entry, id: entries.count)
             nameBytes += value.path.utf8.count
-            guard nameBytes <= 32 * 1024 * 1024 else { throw ArchiveFailure.capacity }
+            guard nameBytes <= 32 * 1024 * 1024 else { throw ArchiveFailure.resourceLimit("32 MiB archive path metadata") }
             entries.append(value)
         }
         let handle = try FileHandle(forReadingFrom: url)
@@ -192,15 +210,26 @@ struct MultiFormatArchive: Sendable {
         _ = try ArchiveSafety.validate(entries: entries, archiveBytes: handle.seekToEnd())
         return Self(url: url, entries: entries, formatName: reader.formatName)
     }
+    static func hasUDFRecognition(_ descriptors: Data) -> Bool {
+        for offset in stride(from: 0, to: descriptors.count, by: 2048) where offset + 6 <= descriptors.count {
+            let signature = descriptors.subdata(in: (offset + 1)..<(offset + 6))
+            if signature == Data("NSR02".utf8) || signature == Data("NSR03".utf8) { return true }
+        }
+        return false
+    }
     func previewText(_ entry: ArchiveEntry) throws -> String? {
+        if let udfBackend { return try udfBackend.previewText(entry) }
         guard entry.isExtractable, !entry.isDirectory, entry.uncompressedSize <= 256 * 1024,
               ["txt", "md", "json", "xml", "csv", "log", "swift", "plist", "yaml", "yml"].contains((entry.path as NSString).pathExtension.lowercased()) else { return nil }
         var data = Data()
         try NativeArchiveReader.stream(entry, from: url) { data.append($0) }
-        return String(data: data, encoding: .utf8)
+        return ArchiveTextPreview.decode(data)
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true,
                  progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
+        if let udfBackend {
+            return try udfBackend.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress)
+        }
         let selected = entries.filter { paths == nil || paths!.contains($0.path) }
         guard !selected.isEmpty, selected.allSatisfy(\.isExtractable) else {
             throw ArchiveFailure.unsupported("The selection contains encrypted or unsupported entries.")
@@ -209,9 +238,9 @@ struct MultiFormatArchive: Sendable {
         let meter = ExtractionProgress(total: total, callback: progress)
         try Task.checkCancellation()
         if createOutputRoot { try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true) }
-        let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .volumeAvailableCapacityKey])
+        let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { throw DestinationFailure.invalidDirectory }
-        if let capacity = values.volumeAvailableCapacity, UInt64(max(0, capacity)) < total + 16 * 1024 * 1024 { throw ArchiveFailure.capacity }
+        try StorageBudget.require(total + 16 * 1024 * 1024, at: outputRoot)
         let staging = outputRoot.appendingPathComponent(".ArchiveDesk-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
         do {
@@ -223,7 +252,7 @@ struct MultiFormatArchive: Sendable {
                     continue
                 }
                 try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-                guard FileManager.default.createFile(atPath: output.path, contents: nil) else { throw ArchiveFailure.capacity }
+                try StorageBudget.createFile(at: output)
                 let handle = try FileHandle(forWritingTo: output)
                 do {
                     try NativeArchiveReader.stream(entry, from: url) {

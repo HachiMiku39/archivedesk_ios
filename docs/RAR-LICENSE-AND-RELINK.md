@@ -1,7 +1,7 @@
 # RAR source backend and relinking
 
 7-Zip 26.03 is compiled from source, not from a RARLAB binary or desktop CLI.
-Only RAR readers/decoders and their dependencies are built. RAR writing,
+Only RAR readers/decoders, a read-only UDF image handler and their dependencies are built. RAR writing,
 encryption creation, volume creation and recovery creation are not exposed.
 
 Upstream source: https://github.com/ip7z/7zip/releases/tag/26.03
@@ -27,6 +27,11 @@ and https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 these reproducible mechanical changes; the script is the patch recipe:
 
 - Bound RAR4/RAR5 item arrays at 100,000 entries.
+- Bound UDF items/files/references to 100,000, directory recursion to 128,
+  extents to 262,144, and aggregate filename/inline-data storage to 32 MiB each.
+  Directory/metadata table buffers are limited to 1 MiB and logical blocks to
+  64 KiB; regular file payloads are streamed and may exceed 4 GiB.
+  These are explicit metadata bounds because the C allocator does not cover C++ new.
 - Wipe temporary BSTR data before freeing it.
 - Remove the upstream process-global RAR5 password/derived-key cache; task-owned
   decoders derive their own keys. This also avoids sharing that cache across workers.
@@ -53,7 +58,7 @@ The old v0.1.0-beta.1 IPA predates this backend and remains unchanged.
 
 The matching kit includes the exact arm64 Release application objects in original
 link order, both static libraries, the unsigned app resources, full notices,
-the five modified upstream files, checksums and a tested portable link script.
+the modified upstream files (including UdfIn.cpp in UDF-enabled releases), checksums and a tested portable link script.
 The source package includes all pristine dependency archives, bridge/allocator
 source and checksum-pinned modification/build recipes. No Apple SDK, signing
 certificate, provisioning profile or credentials are included.

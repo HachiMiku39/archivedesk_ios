@@ -2,6 +2,89 @@ import XCTest
 
 final class ArchiveDeskDuoUITests: XCTestCase {
     @MainActor
+    func testPrivateOpenSourceMediaPreviews() throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("work/private-media-fixtures/PreviewSamples.zip")
+        guard FileManager.default.fileExists(atPath: fixture.path) else {
+            throw XCTSkip("Private real-media fixture is intentionally not distributed; generate it with verify-media-packing.sh")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--media-fixture-path=\(fixture.path)", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        for (name, codec) in [("cover.jpeg", "mjpeg"), ("song.flac", "flac"), ("video.mp4", "libdav1d / aac")] {
+            let row = app.descendants(matching: .any)["entry.\(name)"].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 30), app.debugDescription)
+            waitForStableHitTarget(row); row.tap()
+            let label = app.staticTexts["mediaCodec"].firstMatch
+            XCTAssertTrue(label.waitForExistence(timeout: 30), app.debugDescription)
+            XCTAssertEqual(label.label, codec)
+            if name != "song.flac" { XCTAssertTrue(app.images["mediaImage"].firstMatch.waitForExistence(timeout: 10)) }
+            if name != "cover.jpeg" {
+                let play = app.buttons["mediaPlayPause"].firstMatch
+                XCTAssertTrue(play.waitForExistence(timeout: 5)); waitForStableHitTarget(play); play.tap()
+                let playing = NSPredicate(format: "label CONTAINS %@", "Pause")
+                expectation(for: playing, evaluatedWith: play); waitForExpectations(timeout: 5)
+                let position = app.staticTexts["mediaPosition"].firstMatch
+                expectation(for: NSPredicate(format: "NOT (label BEGINSWITH %@)", "0:00"), evaluatedWith: position)
+                waitForExpectations(timeout: 10)
+                waitForStableHitTarget(play); play.tap()
+                let seek = app.sliders["mediaSeek"].firstMatch
+                XCTAssertTrue(seek.exists); seek.adjust(toNormalizedSliderPosition: 0.3)
+                XCTAssertFalse(position.label.hasPrefix("0:00"))
+            }
+            capture(app, name: "Open-source \((name as NSString).pathExtension) preview")
+            let duoBack = app.buttons["BackButton"].firstMatch
+            let back = duoBack.exists ? duoBack : app.navigationBars.buttons.element(boundBy: 0)
+            if !row.isHittable && back.exists && back.isHittable { waitForStableHitTarget(back); back.tap() }
+            XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+        }
+        let log = app.descendants(matching: .any)["entry.OST1.log"].firstMatch
+        XCTAssertTrue(log.waitForExistence(timeout: 5)); waitForStableHitTarget(log); log.tap()
+        XCTAssertTrue(app.scrollViews["textPreview"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        capture(app, name: "UTF-16 log preview")
+        app.terminate()
+    }
+    @MainActor
+    func testFolderAllAndMultipleExtraction() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let folder = app.buttons["folder.Documents"].firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 15))
+        let all = app.buttons["extractFolderOrAll"].firstMatch
+        XCTAssertTrue(all.isEnabled)
+        XCTAssertEqual(all.label, "Extract all contents")
+        waitForStableHitTarget(all); all.tap()
+        let local = app.buttons["ArchiveDesk on this device"].firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); waitForStableHitTarget(local); local.tap()
+        XCTAssertTrue(app.staticTexts["folderExtractionReceipt"].firstMatch.waitForExistence(timeout: 10))
+        waitForStableHitTarget(folder); folder.tap()
+        let entire = app.buttons["extractFolderOrAll"].firstMatch
+        XCTAssertEqual(entire.label, "Extract entire folder")
+        waitForStableHitTarget(entire); entire.tap()
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); waitForStableHitTarget(local); local.tap()
+        XCTAssertTrue(app.staticTexts["folderExtractionReceipt"].firstMatch.waitForExistence(timeout: 10))
+        let parent = app.buttons["parentFolder"].firstMatch
+        waitForStableHitTarget(parent); parent.tap()
+        let mode = app.buttons["toggleExtractionSelection"].firstMatch
+        waitForStableHitTarget(mode); mode.tap()
+        let selectFolder = app.buttons["select.Documents"].firstMatch
+        waitForStableHitTarget(selectFolder); selectFolder.tap()
+        let selectFile = app.buttons["select.Readme.txt"].firstMatch
+        waitForStableHitTarget(selectFile); selectFile.tap()
+        let multiple = app.buttons["extractSelectedItems"].firstMatch
+        XCTAssertTrue(multiple.isEnabled)
+        XCTAssertTrue(multiple.label.contains("(2)"))
+        capture(app, name: "Folder and file multi-selection")
+        waitForStableHitTarget(multiple); multiple.tap()
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); waitForStableHitTarget(local); local.tap()
+        XCTAssertTrue(app.staticTexts["folderExtractionReceipt"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["extractSelectedItems"].firstMatch.exists)
+    }
+    @MainActor
     func testAccessiblePreviewAndBackNavigation() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()

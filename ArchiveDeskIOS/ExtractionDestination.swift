@@ -1,26 +1,30 @@
 import Foundation
 
 enum DestinationKind: Equatable, Sendable {
-  case appDocuments, iCloud, externalVolume
+  case appDocuments, iCloud, externalVolume, authorizedDirectory
 }
 
-/// Do not confuse a provider's local cache with an on-device destination.
-/// iOS does not expose a general third-party provider identity for picked URLs.
-/// Unknown destinations therefore fail closed, without even a test write.
+/// Storage identity is descriptive, not an authorization decision. Only the
+/// system picker/security scope, coordination and actual provider I/O authorize
+/// access. Missing volume metadata must not reject Downloads or a USB provider.
 enum DestinationPolicy {
   static func classify(
     inAppDocuments: Bool, isUbiquitous: Bool?,
-    volumeIsLocal: Bool?, volumeIsInternal: Bool?
+    volumeIsLocal: Bool?, volumeIsInternal: Bool?, differentFromAppVolume: Bool? = nil,
+    fileSystemIsLocal: Bool? = nil, isWritable: Bool? = nil
   ) throws -> DestinationKind {
+    guard isWritable != false else { throw DestinationFailure.readOnly }
     if inAppDocuments { return .appDocuments }
     if isUbiquitous == true { return .iCloud }
-    if volumeIsLocal == true && volumeIsInternal == false { return .externalVolume }
-    throw DestinationFailure.unidentifiedProvider
+    let local = volumeIsLocal == true || (volumeIsLocal == nil && fileSystemIsLocal == true)
+    if local && (volumeIsInternal == false || (volumeIsInternal == nil && differentFromAppVolume == true)) { return .externalVolume }
+    return .authorizedDirectory
   }
 
   static func validate(_ url: URL) throws -> DestinationKind {
     guard url.isFileURL else { throw DestinationFailure.invalidDirectory }
-    let values = try url.resourceValues(forKeys: [
+    var fresh = url; fresh.removeAllCachedResourceValues()
+    let values = try fresh.resourceValues(forKeys: [
       .isDirectoryKey, .isSymbolicLinkKey,
       .isWritableKey, .isUbiquitousItemKey, .volumeIsLocalKey, .volumeIsInternalKey,
     ])
@@ -30,24 +34,16 @@ enum DestinationPolicy {
     let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     let root = documents.resolvingSymlinksInPath().standardizedFileURL.pathComponents
     let candidate = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
-    let kind = try classify(
-      inAppDocuments: candidate.starts(with: root),
+    return try classify(inAppDocuments: candidate.starts(with: root),
       isUbiquitous: values.isUbiquitousItem, volumeIsLocal: values.volumeIsLocal,
-      volumeIsInternal: values.volumeIsInternal)
-    guard values.isWritable != false else { throw DestinationFailure.readOnly }
-    return kind
+      volumeIsInternal: values.volumeIsInternal, isWritable: values.isWritable)
   }
 }
 
 enum DestinationFailure: LocalizedError {
-  case unidentifiedProvider, invalidDirectory, readOnly
+  case invalidDirectory, readOnly
   var errorDescription: String? {
     switch self {
-    case .unidentifiedProvider:
-      String(
-        localized:
-          "This location cannot be verified as local storage, an external drive, or iCloud. Third-party cloud drives are read-only. Choose another destination."
-      )
     case .invalidDirectory:
       String(localized: "Choose an existing folder, not a file or symbolic link.")
     case .readOnly:

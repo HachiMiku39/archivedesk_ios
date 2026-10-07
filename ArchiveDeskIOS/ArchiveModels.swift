@@ -43,6 +43,65 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
 enum CollisionPolicy: Sendable { case skip, replace, keepBoth }
 
+/// Capture the user's extraction scope before presenting a destination/password.
+/// Folder matching is component-boundary aware and includes empty directories.
+enum ArchiveExtractionScope: Equatable, Sendable {
+    case entry(String), folder(String), items(Set<String>), all
+    func entries(in archive: [ArchiveEntry]) -> [ArchiveEntry] {
+        switch self {
+        case .entry(let path): return archive.filter { $0.path == path }
+        case .folder(let path):
+            let prefix = path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/"
+            return archive.filter { $0.path.hasPrefix(prefix) }
+        case .items(let paths):
+            return archive.filter { entry in
+                var candidate = entry.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                if paths.contains(entry.path) || paths.contains(candidate) { return true }
+                while !candidate.isEmpty {
+                    candidate = (candidate as NSString).deletingLastPathComponent
+                    if paths.contains(candidate) || paths.contains(candidate + "/") { return true }
+                }
+                return false
+            }
+        case .all: return archive
+        }
+    }
+}
+
+enum ArchivePreviewKind: Sendable {
+    case text, image, audio, video
+    static func forPath(_ path: String) -> Self? {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "txt", "md", "json", "xml", "csv", "log", "swift", "plist", "yaml", "yml": .text
+        case "jpg", "jpeg", "png", "webp": .image
+        case "flac", "mp3", "m4a", "aac", "wav", "ogg", "opus": .audio
+        case "mp4", "mov", "mkv", "webm": .video
+        default: nil
+        }
+    }
+}
+
+/// Unicode decoding uses Swift's open-source standard-library codecs. No
+/// heuristic legacy-codepage guesses or unbounded document loading.
+enum ArchiveTextPreview {
+    static func decode(_ data: Data) -> String? {
+        guard data.count <= 256 * 1024 else { return nil }
+        if data.starts(with: [0xff, 0xfe]) || data.starts(with: [0xfe, 0xff]) {
+            guard data.count % 2 == 0 else { return nil }
+            let little = data.first == 0xff
+            let bytes = Array(data.dropFirst(2))
+            let units = stride(from: 0, to: bytes.count, by: 2).map { i in
+                little ? UInt16(bytes[i]) | UInt16(bytes[i + 1]) << 8 : UInt16(bytes[i]) << 8 | UInt16(bytes[i + 1])
+            }
+            let text = String(decoding: units, as: UTF16.self)
+            return Array(text.utf16) == units ? text : nil
+        }
+        let bytes = data.starts(with: [0xef, 0xbb, 0xbf]) ? data.dropFirst(3) : data[...]
+        let text = String(decoding: bytes, as: UTF8.self)
+        return text.utf8.elementsEqual(bytes) ? text : nil
+    }
+}
+
 /// Navigation belongs to the workspace, not the presentation or device pose.
 struct ArchiveNavigation: Equatable, Sendable {
     var folder = ""
@@ -97,13 +156,17 @@ enum ArchiveBrowser {
 }
 
 enum ArchiveFailure: LocalizedError {
-    case malformed(String), unsafePath(String), unsupported(String), capacity, crcMismatch(String), cancelled
+    case malformed(String), unsafePath(String), unsupported(String), capacity, memoryLimit, codecInitialization(String, Int32, UInt64), resourceLimit(String), storageSpace(UInt64, UInt64), crcMismatch(String), cancelled
     var errorDescription: String? {
         switch self {
         case .malformed(let message): message
         case .unsafePath(let path): "Unsafe archive path: \(path)"
         case .unsupported(let message): message
-        case .capacity: "There is not enough available storage for this operation."
+        case .capacity: String(localized: "The operation exceeded an application resource limit. This does not mean the disk is full.")
+        case .memoryLimit: String(localized: "The decoder could not allocate memory within the app's safety budget. Free disk space cannot resolve this memory limit.")
+        case .codecInitialization(let step, let code, let live): String(localized: "Archive engine initialization failed.") + "\n" + step + "; errno=" + String(code) + (code != 0 ? " (" + NSError(domain: NSPOSIXErrorDomain, code: Int(code)).localizedDescription + ")" : "") + "; " + String(localized: "Codec memory in use:") + " " + live.formatted(.byteCount(style: .memory))
+        case .resourceLimit(let detail): String(localized: "Application safety limit exceeded:") + " " + detail
+        case .storageSpace(let needed, let available): String(localized: "Not enough space on the destination volume.") + " " + String(localized: "Required:") + " " + needed.formatted(.byteCount(style: .file)) + "; " + String(localized: "Available:") + " " + available.formatted(.byteCount(style: .file))
         case .crcMismatch(let path): "CRC verification failed for \(path)."
         case .cancelled: "The operation was cancelled."
         }

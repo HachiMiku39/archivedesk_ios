@@ -17,6 +17,7 @@ Updated 2026-10-04. Yes means an integrated reader with sample evidence, not eve
 | Raw LZMA stream | Yes | Yes | No | N/A | Independent LZMA-alone sample preview/output bytes verified |
 | Zstd/LZ4 | No | No | No | N/A | Not compiled or registered |
 | ISO9660 | Yes | Yes | No | N/A | Two upstream sample files verified as hello + newline |
+| UDF / UDF-hybrid ISO | Yes | Yes | No | N/A | Apple-generated UDF Unicode/preview/output fixture; damaged/cancelled open checks; external 5.9GB ISO index only, full round trip pending |
 
 RAR creation, recovery records/volumes, archive editing, DRM bypass, package execution, GPU decompression, and unlimited background execution are out of scope for 1.0.
 

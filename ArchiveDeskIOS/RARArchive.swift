@@ -14,14 +14,18 @@ enum RARFailure: LocalizedError {
 }
 
 private func rarContinue(_ context: UnsafeMutableRawPointer?) -> Int32 { Task.isCancelled ? 0 : 1 }
-private func checkRAR(_ status: Int32) throws {
+private func checkRAR(_ status: Int32, udf: Bool = false) throws {
+    if udf && ![0, 4, 5, 7].contains(status) {
+        throw ArchiveFailure.malformed(String(localized: "The UDF image is damaged, unsupported, or exceeds the safe metadata limits. This is not a disk-space error."))
+    }
     switch status {
     case 0: return
     case 1: throw RARFailure.passwordRequired
     case 2: throw RARFailure.passwordOrDamage
     case 3: throw RARFailure.unsupported
     case 4: throw CancellationError()
-    case 5: throw ArchiveFailure.capacity
+    case 5: throw ArchiveFailure.memoryLimit
+    case 7: throw ArchiveFailure.resourceLimit("100,000 archive entries")
     default: throw RARFailure.malformed
     }
 }
@@ -52,22 +56,24 @@ private func rarWrite(_ context: UnsafeMutableRawPointer?, _ bytes: UnsafeRawPoi
 /// thread. No password is stored in the archive model or between tasks.
 private final class RARReader {
     let pointer: UnsafeMutableRawPointer
-    init(url: URL, password: String?) throws {
+    let udf: Bool
+    init(url: URL, password: String?, udf: Bool = false) throws {
+        self.udf = udf
         var status: Int32 = 0
         let opened = try withRARPassword(password) { secret in
-            url.path.withCString { adr_open($0, secret, rarContinue, nil, &status) }
+            url.path.withCString { udf ? adr_open_udf($0, rarContinue, nil, &status) : adr_open($0, secret, rarContinue, nil, &status) }
         }
-        try checkRAR(status)
+        try checkRAR(status, udf: udf)
         guard let opened else { throw RARFailure.malformed }
         pointer = opened
     }
     deinit { adr_close(pointer) }
     var headersEncrypted: Bool { adr_headers_encrypted(pointer) != 0 }
-    var formatName: String { adr_version(pointer) == 5 ? "RAR5" : "RAR4" }
+    var formatName: String { udf ? "UDF" : adr_version(pointer) == 5 ? "RAR5" : "RAR4" }
     func entry(_ index: Int) throws -> ArchiveEntry {
         var path = [CChar](repeating: 0, count: 4096)
         var value = ADREntry()
-        try checkRAR(adr_entry(pointer, UInt32(index), &path, path.count, &value))
+        try checkRAR(adr_entry(pointer, UInt32(index), &path, path.count, &value), udf: udf)
         guard let decoded = path.withUnsafeBufferPointer({ String(validatingCString: $0.baseAddress!) }), value.unsafe == 0 else {
             throw ArchiveFailure.unsafePath("RAR entry")
         }
@@ -87,7 +93,7 @@ private final class RARReader {
             adr_extract(pointer, UInt32(expected.id), expected.uncompressedSize, $0, rarWrite, Unmanaged.passUnretained(output).toOpaque())
         }
         if let error = output.error { throw error }
-        try checkRAR(result)
+        try checkRAR(result, udf: udf)
     }
 }
 
@@ -96,30 +102,31 @@ struct RARArchive: Sendable {
     let entries: [ArchiveEntry]
     let headersEncrypted: Bool
     let formatName: String
-    static func open(url: URL, password: String? = nil) throws -> Self {
-        let reader = try RARReader(url: url, password: password)
+    var isUDF: Bool = false
+    static func open(url: URL, password: String? = nil, udf: Bool = false) throws -> Self {
+        let reader = try RARReader(url: url, password: password, udf: udf)
         var entries: [ArchiveEntry] = []
         var nameBytes = 0
         for index in 0..<Int(adr_count(reader.pointer)) {
             try Task.checkCancellation()
             let entry = try reader.entry(index)
             nameBytes += entry.path.utf8.count
-            guard nameBytes <= 32 * 1024 * 1024 else { throw ArchiveFailure.capacity }
+            guard nameBytes <= 32 * 1024 * 1024 else { throw ArchiveFailure.resourceLimit("32 MiB RAR path metadata") }
             entries.append(entry)
         }
         let bytes = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         _ = try ArchiveSafety.validate(entries: entries, archiveBytes: UInt64(max(0, bytes)))
-        return Self(url: url, entries: entries, headersEncrypted: reader.headersEncrypted, formatName: reader.formatName)
+        return Self(url: url, entries: entries, headersEncrypted: reader.headersEncrypted, formatName: reader.formatName, isUDF: udf)
     }
     func requiresPassword(_ entry: ArchiveEntry) -> Bool { headersEncrypted || entry.isEncrypted }
     func previewText(_ entry: ArchiveEntry, password: String? = nil) throws -> String? {
         guard !entry.isDirectory, entry.uncompressedSize <= 256 * 1024,
               ["txt", "md", "json", "xml", "csv", "log", "swift", "plist", "yaml", "yml"].contains((entry.path as NSString).pathExtension.lowercased()) else { return nil }
         if requiresPassword(entry), password == nil { throw RARFailure.passwordRequired }
-        let reader = try RARReader(url: url, password: password)
+        let reader = try RARReader(url: url, password: password, udf: isUDF)
         var bytes = Data()
         try reader.stream(entry, password: password) { bytes.append($0) }
-        return String(data: bytes, encoding: .utf8)
+        return ArchiveTextPreview.decode(bytes)
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
                  progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
@@ -132,10 +139,13 @@ struct RARArchive: Sendable {
         if createOutputRoot { try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true) }
         let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .volumeAvailableCapacityKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { throw DestinationFailure.invalidDirectory }
-        if let capacity = values.volumeAvailableCapacity, UInt64(max(0, capacity)) < total + 16 * 1024 * 1024 { throw ArchiveFailure.capacity }
+        try StorageBudget.require(total + 16 * 1024 * 1024, at: outputRoot)
         let stage = outputRoot.appendingPathComponent(".ArchiveDesk-\(UUID())", isDirectory: true)
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: false)
         do {
+            // Reuse one task-local handle; reopening the whole image per file
+            // would repeatedly index hundreds of UDF entries on USB storage.
+            let imageReader = isUDF ? try RARReader(url: url, password: nil, udf: true) : nil
             for entry in selected {
                 try Task.checkCancellation()
                 let file = stage.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
@@ -143,10 +153,10 @@ struct RARArchive: Sendable {
                     try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
                 } else {
                     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    guard FileManager.default.createFile(atPath: file.path, contents: nil) else { throw ArchiveFailure.capacity }
+                    try StorageBudget.createFile(at: file)
                     let target = try FileHandle(forWritingTo: file)
                     defer { try? target.close() }
-                    let reader = try RARReader(url: url, password: password)
+                    let reader = try imageReader ?? RARReader(url: url, password: password)
                     try reader.stream(entry, password: password) {
                         try target.write(contentsOf: $0); meter.advance($0.count)
                     }
