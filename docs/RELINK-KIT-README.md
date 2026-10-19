@@ -70,4 +70,5 @@ third-party license permissions remain intact. This is not a blanket open-source
 license for the app's own code or unrestricted redistribution permission for
 modified binaries. The RAR code must not be used to develop a RAR-compatible archiver.
 The app has no anti-tamper check rejecting modified libraries. Apple signing rules
-still apply, and physical-device installation remains unverified.
+still apply. A development-signed build from the corresponding app sources was
+tested on iPhone Air; this does not verify every third-party re-signing workflow.

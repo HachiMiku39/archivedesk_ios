@@ -33,6 +33,17 @@ enum CoreVerification {
         check(!MemoryPolicy.allowsNewWork(headroom: 128 * 1024 * 1024) && MemoryPolicy.allowsNewWork(headroom: nil), "New task / preview memory policy")
         check(!MemoryPolicy.shouldStop(headroom: 64 * 1024 * 1024) && MemoryPolicy.allowsNewWork(headroom: 192 * 1024 * 1024),
               "Memory threshold boundaries")
+        let preview = MediaPreviewModel()
+        let previewID = preview.reset()
+        check(preview.control(generation: previewID) == nil, "Empty preview does not keep a decoder worker alive")
+        let previewInfo = ArchiveMediaInfo(hasVideo: true, hasAudio: false, width: 640, height: 360, duration: 1,
+            videoCodec: "test", audioCodec: "", sampleRate: 0, channels: 0, bitRate: 0, tags: [], tagsLimited: false)
+        preview.ready(previewInfo, kind: .video, budget: MediaPreviewBudget.choose(physicalMemory: 6 * 1024 * 1024 * 1024,
+            headroom: nil, lowPower: false, thermalLimited: false), generation: previewID)
+        check(preview.control(generation: previewID) != nil, "Ready preview accepts decoder controls")
+        preview.fail(MediaPreviewFailure.limit, generation: previewID)
+        check(preview.control(generation: previewID) == nil, "Failed presentation lets decoder worker release staged media")
+        check(preview.drain(generation: previewID, serial: 0, end: 1), "EOF drain exits after presentation failure")
         var sampler = ProcessSampler()
         let baseline = sampler.sample()
         check(baseline.cpuPercent == nil && (baseline.memoryBytes ?? 0) > 0, "First process CPU sample / footprint")

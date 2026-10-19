@@ -2,7 +2,86 @@ import XCTest
 
 final class ArchiveDeskDuoUITests: XCTestCase {
     @MainActor
+    func testMusicTagsChineseLandscapeAndLargeText() throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("work/music-tag-fixtures/MusicTags.zip")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.path))
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--media-fixture-path=\(fixture.path)", "--accessibility-text", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let row = app.descendants(matching: .any)["entry.tagged.mp3"].firstMatch
+        XCTAssertTrue(app.buttons["extractFolderOrAll"].firstMatch.waitForExistence(timeout: 20))
+        for _ in 0..<8 where !row.exists || !row.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(row.waitForExistence(timeout: 5)); waitForStableHitTarget(row); row.tap()
+        XCTAssertTrue(app.images["musicArtwork"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["音乐标签"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["歌名"].firstMatch.exists)
+        let title = app.descendants(matching: .any)["musicTag.title"].firstMatch
+        XCTAssertEqual(title.label, "星のうた · 测试曲")
+        capture(app, name: "中文音乐标签 — 辅助功能大字体")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForLayout(app, size: nil)
+        XCTAssertTrue(app.images["musicArtwork"].firstMatch.exists)
+        XCTAssertEqual(title.label, "星のうた · 测试曲")
+        XCTAssertTrue(app.buttons["mediaPlayPause"].firstMatch.isHittable)
+        capture(app, name: "中文音乐标签 — iPad 横屏")
+        XCUIDevice.shared.orientation = .portrait
+    }
+    @MainActor
+    func testMusicTagsAndArtwork() throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("work/music-tag-fixtures/MusicTags.zip")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.path), "Run make-music-tag-fixtures.sh first")
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--media-fixture-path=\(fixture.path)", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        for name in ["tagged.mp3", "tagged.flac", "tagged.m4a", "id3v24.mp3", "plain.wav", "oversized.flac", "broken-cover.mp3", "large-cover.mp3", "long-tags.mp3"] {
+            let row = app.descendants(matching: .any)["entry.\(name)"].firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 20), app.debugDescription)
+            waitForStableHitTarget(row); row.tap()
+            XCTAssertTrue(app.staticTexts["mediaCodec"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+            let cover = app.images["musicArtwork"].firstMatch
+            if name.hasPrefix("tagged.") || name == "id3v24.mp3" {
+                XCTAssertTrue(cover.waitForExistence(timeout: 10), app.debugDescription)
+                let title = app.descendants(matching: .any)["musicTag.title"].firstMatch
+                XCTAssertTrue(title.waitForExistence(timeout: 5)); XCTAssertEqual(title.label, "星のうた · 测试曲")
+                XCTAssertEqual(app.descendants(matching: .any)["musicTag.artist"].firstMatch.label, "ArchiveDesk Artist")
+                XCTAssertEqual(app.descendants(matching: .any)["musicTag.album"].firstMatch.label, "Preview Test Album")
+                XCTAssertEqual(app.descendants(matching: .any)["musicTag.track"].firstMatch.label, "3/12")
+            } else {
+                XCTAssertFalse(cover.exists, "Previous entry artwork must be cleared")
+                if name == "plain.wav" { XCTAssertTrue(app.staticTexts["musicTagsEmpty"].firstMatch.exists) }
+                else if name == "long-tags.mp3" {
+                    XCTAssertTrue(app.staticTexts["musicTagsLimited"].firstMatch.exists)
+                    XCTAssertLessThanOrEqual(app.descendants(matching: .any)["musicTag.title"].firstMatch.label.utf8.count, 2051)
+                } else { XCTAssertTrue(app.staticTexts["musicArtworkUnavailable"].firstMatch.waitForExistence(timeout: 5)) }
+            }
+            let play = app.buttons["mediaPlayPause"].firstMatch
+            XCTAssertTrue(play.isHittable); play.tap()
+            expectation(for: NSPredicate(format: "label CONTAINS %@", "Pause"), evaluatedWith: play)
+            waitForExpectations(timeout: 5)
+            let position = app.staticTexts["mediaPosition"].firstMatch
+            expectation(for: NSPredicate(format: "NOT (label BEGINSWITH %@)", "0:00"), evaluatedWith: position)
+            waitForExpectations(timeout: 8)
+            play.tap()
+            capture(app, name: "Music tags and artwork — \(name)")
+            let back = app.buttons["BackButton"].firstMatch.exists ? app.buttons["BackButton"].firstMatch : app.navigationBars.buttons.element(boundBy: 0)
+            if !row.isHittable && back.exists && back.isHittable { back.tap() }
+            XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+        }
+    }
+    @MainActor
     func testPrivateOpenSourceMediaPreviews() throws {
+        try verifyPrivateMediaPreviews(memoryGB: nil)
+    }
+    @MainActor
+    func testPrivateSixGBMediaPreviews() throws {
+        try verifyPrivateMediaPreviews(memoryGB: 6)
+    }
+    @MainActor
+    private func verifyPrivateMediaPreviews(memoryGB: Int?) throws {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("work/private-media-fixtures/PreviewSamples.zip")
         guard FileManager.default.fileExists(atPath: fixture.path) else {
@@ -11,6 +90,7 @@ final class ArchiveDeskDuoUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         app.launchArguments = ["--media-fixture-path=\(fixture.path)", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        if let memoryGB { app.launchArguments.append("--preview-memory-gb=\(memoryGB)") }
         app.launch()
         for (name, codec) in [("cover.jpeg", "mjpeg"), ("song.flac", "flac"), ("video.mp4", "libdav1d / aac")] {
             let row = app.descendants(matching: .any)["entry.\(name)"].firstMatch
@@ -19,7 +99,12 @@ final class ArchiveDeskDuoUITests: XCTestCase {
             let label = app.staticTexts["mediaCodec"].firstMatch
             XCTAssertTrue(label.waitForExistence(timeout: 30), app.debugDescription)
             XCTAssertEqual(label.label, codec)
-            if name != "song.flac" { XCTAssertTrue(app.images["mediaImage"].firstMatch.waitForExistence(timeout: 10)) }
+            if name != "song.flac" {
+                let image = app.images["mediaImage"].firstMatch
+                XCTAssertTrue(image.waitForExistence(timeout: 10))
+                let expected = name == "cover.jpeg" ? "900 × 900" : memoryGB == 6 ? "480 × 270" : "640 × 360"
+                XCTAssertEqual(image.value as? String, expected)
+            }
             if name != "cover.jpeg" {
                 let play = app.buttons["mediaPlayPause"].firstMatch
                 XCTAssertTrue(play.waitForExistence(timeout: 5)); waitForStableHitTarget(play); play.tap()

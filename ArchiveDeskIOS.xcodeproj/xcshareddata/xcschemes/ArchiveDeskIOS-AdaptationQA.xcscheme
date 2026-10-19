@@ -14,6 +14,8 @@
     <Testables><TestableReference skipped="NO">
       <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="B00000000000000000000001" BuildableName="ArchiveDeskIOSUITests.xctest" BlueprintName="ArchiveDeskIOSUITests" ReferencedContainer="container:ArchiveDeskIOS.xcodeproj"/>
       <SelectedTests>
+        <Test Identifier="ArchiveDeskDuoUITests/testMusicTagsAndArtwork()"/>
+        <Test Identifier="ArchiveDeskDuoUITests/testMusicTagsChineseLandscapeAndLargeText()"/>
         <Test Identifier="ArchiveDeskDuoUITests/testPrivateOpenSourceMediaPreviews()"/>
         <Test Identifier="ArchiveDeskDuoUITests/testFolderAllAndMultipleExtraction()"/>
         <Test Identifier="ArchiveDeskDuoUITests/testAccessiblePreviewAndBackNavigation()"/>

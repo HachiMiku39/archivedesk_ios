@@ -18,6 +18,6 @@ task_sdk=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
   ArchiveDeskIOS/ArchiveContainer.swift ArchiveDeskIOS/MultiFormatArchive.swift ArchiveDeskIOS/RARArchive.swift \
   ArchiveDeskIOS/CoordinatedFileAccess.swift ArchiveDeskIOS/ExtractionDestination.swift ArchiveDeskIOS/ArchivePacking.swift ArchiveDeskIOS/WorkspaceModel.swift \
   ArchiveDeskIOS/DebugArchiveFixture.swift ArchiveDeskIOS/PerformanceModel.swift Tests/CoreVerification.swift \
-  ArchiveDeskIOS/ArchiveMediaDecoder.swift ArchiveDeskIOS/MediaPreviewModel.swift \
+  ArchiveDeskIOS/ArchiveMediaDecoder.swift ArchiveDeskIOS/MediaPlaybackBuffer.swift ArchiveDeskIOS/MediaPreviewModel.swift \
   -o work/bin/core-verification
 work/bin/core-verification

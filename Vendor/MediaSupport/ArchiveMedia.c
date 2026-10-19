@@ -21,7 +21,7 @@
 #define ADM_PACKET_LIMIT (8 * 1024 * 1024)
 #define ADM_PCM_SAMPLES 65536
 struct ADMDecoder {
-    int fd, stream[2], pending, eof, flush[2], drained[2];
+    int fd, stream[2], pending, eof, flush[2], drained[2], video_edge;
     int64_t size, position;
     ADMContinue continuation;
     void *continuation_context;
@@ -34,7 +34,7 @@ struct ADMDecoder {
     SwrContext *resampler;
     AVChannelLayout source_layout;
     int source_rate, source_format;
-    uint8_t *rgba, *pcm;
+    uint8_t *rgba, *pcm, *artwork;
     size_t rgba_size;
     double next_time[2];
 };
@@ -82,7 +82,7 @@ void adm_close(ADMDecoder **pointer) {
     av_packet_free(&d->packet); av_frame_free(&d->frame);
     sws_freeContext(d->scaler); swr_free(&d->resampler);
     av_channel_layout_uninit(&d->source_layout);
-    av_free(d->rgba); av_free(d->pcm);
+    av_free(d->rgba); av_free(d->pcm); av_free(d->artwork);
     avformat_close_input(&d->format);
     if (d->io) { av_freep(&d->io->buffer); avio_context_free(&d->io); }
     if (d->fd >= 0) close(d->fd);
@@ -100,7 +100,7 @@ int adm_open(const char *path, ADMContinue continuation, void *context, ADMDecod
     dispatch_once_f(&initialized, NULL, initialize_media);
     ADMDecoder *d = calloc(1, sizeof(*d));
     if (!d) return AVERROR(ENOMEM);
-    d->fd = -1; d->stream[0] = d->stream[1] = -1; d->pending = -1;
+    d->fd = -1; d->stream[0] = d->stream[1] = -1; d->pending = -1; d->video_edge = 1280;
     d->continuation = continuation; d->continuation_context = context;
     int result = AVERROR(ENOMEM);
     const char *stage = "local input";
@@ -142,8 +142,19 @@ int adm_open(const char *path, ADMContinue continuation, void *context, ADMDecod
         enum AVMediaType type = kind ? AVMEDIA_TYPE_AUDIO : AVMEDIA_TYPE_VIDEO;
         const AVCodec *codec = NULL;
         int index = av_find_best_stream(d->format, type, -1, -1, &codec, 0);
+        // Album art is not timed video. Never initialize it as a playback
+        // decoder: malformed/unsupported covers must not reject valid audio.
+        if (!kind && index >= 0 && (d->format->streams[index]->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
+            index = AVERROR_STREAM_NOT_FOUND;
+            for (unsigned i = 0; i < d->format->nb_streams; i++) {
+                AVStream *s = d->format->streams[i];
+                if (s->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !(s->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
+                    index = (int)i; codec = avcodec_find_decoder(s->codecpar->codec_id); break;
+                }
+            }
+        }
         if (index == AVERROR_STREAM_NOT_FOUND) { d->drained[kind] = 1; continue; }
-        if (index < 0 || !codec) { result = index; goto failure; }
+        if (index < 0 || !codec) { result = index < 0 ? index : AVERROR_DECODER_NOT_FOUND; goto failure; }
         AVCodecParameters *p = d->format->streams[index]->codecpar;
         if ((!kind && (p->width <= 0 || p->height <= 0 || (int64_t)p->width * p->height > ADM_PIXELS)) ||
             (kind && (p->ch_layout.nb_channels < 1 || p->ch_layout.nb_channels > 8 || p->sample_rate < 8000 || p->sample_rate > 192000))) { result = AVERROR(EFBIG); goto failure; }
@@ -160,7 +171,11 @@ int adm_open(const char *path, ADMContinue continuation, void *context, ADMDecod
         if (result < 0) goto failure;
         char *name = kind ? info->audio_codec : info->video_codec;
         snprintf(name, 32, "%s", codec->name);
-        if (kind) info->has_audio = 1;
+        if (kind) {
+            info->has_audio = 1; info->sample_rate = p->sample_rate;
+            info->channels = p->ch_layout.nb_channels;
+            info->bit_rate = p->bit_rate > 0 ? p->bit_rate : d->format->bit_rate;
+        }
         else { info->has_video = 1; info->width = p->width; info->height = p->height; }
     }
     if (!info->has_video && !info->has_audio) { result = AVERROR_DECODER_NOT_FOUND; goto failure; }
@@ -180,6 +195,12 @@ failure:
     adm_close(&d);
     return result;
 }
+int adm_video_output_limit(ADMDecoder *d, int longest_edge) {
+    if (!d || longest_edge < 160 || longest_edge > 1280) return AVERROR(EINVAL);
+    if (interrupted(d)) return AVERROR_EXIT;
+    d->video_edge = longest_edge;
+    return 0;
+}
 static int convert_frame(ADMDecoder *d, int kind, ADMFrame *event) {
     AVFrame *f = d->frame;
     memset(event, 0, sizeof(*event)); event->kind = kind + 1;
@@ -188,7 +209,7 @@ static int convert_frame(ADMDecoder *d, int kind, ADMFrame *event) {
     if (!isfinite(event->time)) return AVERROR_INVALIDDATA;
     if (!kind) {
         if (f->width <= 0 || f->height <= 0 || (int64_t)f->width * f->height > ADM_PIXELS) return AVERROR(EFBIG);
-        double ratio = fmin(1.0, 1280.0 / fmax(f->width, f->height));
+        double ratio = fmin(1.0, (double)d->video_edge / fmax(f->width, f->height));
         int width = (int)(f->width * ratio), height = (int)(f->height * ratio);
         if (width < 1 || height < 1) return AVERROR_INVALIDDATA;
         size_t size = (size_t)width * height * 4;
@@ -231,6 +252,66 @@ static int convert_frame(ADMDecoder *d, int kind, ADMFrame *event) {
     d->next_time[kind] = event->time + event->duration;
     return 1;
 }
+int adm_metadata(ADMDecoder *d, unsigned index, char *key, size_t key_size, char *value, size_t value_size) {
+    if (!d || !key || !value || !key_size || !value_size || index > 64) return AVERROR(EINVAL);
+    if (interrupted(d)) return AVERROR_EXIT;
+    key[0] = value[0] = 0;
+    AVDictionary *sources[2] = {d->format->metadata,
+        d->stream[1] >= 0 ? d->format->streams[d->stream[1]]->metadata : NULL};
+    for (int source = 0; source < 2; source++) {
+        const AVDictionaryEntry *tag = NULL;
+        // At most 65 entries are visited, regardless of an input's tag count.
+        while ((tag = av_dict_get(sources[source], "", tag, AV_DICT_IGNORE_SUFFIX))) {
+            if (index--) continue;
+            size_t k = strnlen(tag->key, key_size), v = strnlen(tag->value, value_size);
+            memcpy(key, tag->key, k < key_size ? k : key_size - 1);
+            key[k < key_size ? k : key_size - 1] = 0;
+            memcpy(value, tag->value, v < value_size ? v : value_size - 1);
+            value[v < value_size ? v : value_size - 1] = 0;
+            return k >= key_size || v >= value_size ? 2 : 1;
+        }
+    }
+    return 0;
+}
+int adm_artwork(ADMDecoder *d, ADMFrame *event) {
+    if (!d || !event) return AVERROR(EINVAL);
+    memset(event, 0, sizeof(*event));
+    av_freep(&d->artwork);
+    int failure = 0;
+    for (unsigned i = 0; i < d->format->nb_streams; i++) {
+        if (interrupted(d)) return AVERROR_EXIT;
+        AVStream *s = d->format->streams[i];
+        if (!(s->disposition & AV_DISPOSITION_ATTACHED_PIC)) continue;
+        if (s->attached_pic.size <= 0 || s->attached_pic.size > ADM_PACKET_LIMIT ||
+            (int64_t)s->codecpar->width * s->codecpar->height > ADM_PIXELS) { failure = AVERROR(EFBIG); continue; }
+        if (s->codecpar->codec_id != AV_CODEC_ID_MJPEG && s->codecpar->codec_id != AV_CODEC_ID_PNG) {
+            failure = AVERROR_DECODER_NOT_FOUND; continue;
+        }
+        const AVCodec *codec = avcodec_find_decoder(s->codecpar->codec_id);
+        AVCodecContext *context = codec ? avcodec_alloc_context3(codec) : NULL;
+        AVFrame *frame = av_frame_alloc();
+        if (!context || !frame) { avcodec_free_context(&context); av_frame_free(&frame); return AVERROR(ENOMEM); }
+        int result = avcodec_parameters_to_context(context, s->codecpar);
+        context->thread_count = 1; context->max_pixels = ADM_PIXELS;
+        if (result >= 0) result = avcodec_open2(context, codec, NULL);
+        if (result >= 0) result = avcodec_send_packet(context, &s->attached_pic);
+        if (result >= 0) result = avcodec_receive_frame(context, frame);
+        if (result >= 0) {
+            ADMDecoder image = {0};
+            image.video_edge = 1280; // Music artwork keeps its separate quality limit.
+            image.format = d->format; image.stream[0] = (int)i; image.frame = frame;
+            result = convert_frame(&image, 0, event);
+            sws_freeContext(image.scaler);
+            if (result > 0) d->artwork = image.rgba;
+            else av_free(image.rgba);
+        }
+        av_frame_free(&frame); avcodec_free_context(&context);
+        if (result > 0) return result;
+        failure = result;
+    }
+    memset(event, 0, sizeof(*event));
+    return failure;
+}
 int adm_next(ADMDecoder *d, ADMFrame *event) {
     if (!d || !event) return AVERROR(EINVAL);
     for (;;) {
@@ -272,8 +353,9 @@ int adm_next(ADMDecoder *d, ADMFrame *event) {
         int result = av_read_frame(d->format, d->packet);
         if (result == AVERROR_EOF) { d->eof = 1; continue; }
         if (result < 0) return result;
-        if (d->packet->size < 0 || d->packet->size > ADM_PACKET_LIMIT) { av_packet_unref(d->packet); return AVERROR(EFBIG); }
         int kind = d->packet->stream_index == d->stream[0] ? 0 : d->packet->stream_index == d->stream[1] ? 1 : -1;
+        // A rejected album-art packet is not audio and must not stop playback.
+        if (kind >= 0 && (d->packet->size < 0 || d->packet->size > ADM_PACKET_LIMIT)) { av_packet_unref(d->packet); return AVERROR(EFBIG); }
         if (kind >= 0) result = avcodec_send_packet(d->codec[kind], d->packet);
         av_packet_unref(d->packet);
         if (result < 0) return result;

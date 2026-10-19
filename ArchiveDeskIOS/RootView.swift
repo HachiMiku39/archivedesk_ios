@@ -317,7 +317,10 @@ struct EntryPreview: View {
             VStack(spacing: 12) {
                 if let image = media.image {
                     Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 360).accessibilityHidden(false).accessibilityLabel("Decoded media image").accessibilityIdentifier("mediaImage")
+                        .frame(maxHeight: media.kind == .audio ? 280 : 360).accessibilityHidden(false)
+                        .accessibilityLabel(media.kind == .audio ? "Album artwork" : "Decoded media image")
+                        .accessibilityValue("\(image.width) × \(image.height)")
+                        .accessibilityIdentifier(media.kind == .audio ? "musicArtwork" : "mediaImage")
                 } else if media.kind == .audio { Image(systemName: "waveform").font(.largeTitle).padding() }
                 if media.kind != .image {
                     Button(action: media.togglePlaying) {
@@ -336,6 +339,35 @@ struct EntryPreview: View {
                 if let info = media.info {
                     Text([info.videoCodec, info.audioCodec].filter { !$0.isEmpty }.joined(separator: " / "))
                         .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("mediaCodec")
+                    if media.kind == .audio {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Music tags").font(.headline)
+                            if media.artworkUnavailable {
+                                Text("Embedded artwork could not be previewed. Audio playback is still available.")
+                                    .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("musicArtworkUnavailable")
+                            }
+                            if info.tags.isEmpty {
+                                Text("No music tags found.").foregroundStyle(.secondary).accessibilityIdentifier("musicTagsEmpty")
+                            }
+                            ForEach(info.tags) { tag in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(verbatim: tag.title).font(.caption).foregroundStyle(.secondary)
+                                    Text(verbatim: tag.value).textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("musicTag.\(tag.key)")
+                                }
+                            }
+                            if info.tagsLimited {
+                                Text("Some music tags were shortened for preview safety.").font(.caption).foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("musicTagsLimited")
+                            }
+                            Text("Audio details").font(.headline)
+                            AdaptiveValueRow("Sample rate", value: "\(info.sampleRate) Hz")
+                            AdaptiveValueRow("Channels", value: String(info.channels))
+                            if info.bitRate > 0 { AdaptiveValueRow("Bit rate", value: "\(info.bitRate / 1000) kb/s") }
+                            Text("Tags are read-only. Embedded JPEG/PNG artwork only; no online lookup.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }.padding()
         } else if let text {

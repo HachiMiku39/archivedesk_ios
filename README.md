@@ -2,25 +2,27 @@
 
 ArchiveDesk 是面向 iPhone、iPad 和 iPhone Duo 自适应界面的压缩包浏览与安全解压工具。采用 SwiftUI 和进程内原生解码引擎，不依赖桌面版 7-Zip 命令行程序。
 
-当前测试版：**0.3.2 Beta 1（build 5）**。最低系统：**iOS / iPadOS 26.0**。本次 IPA 使用 27.1 SDK 构建 Duo 专用布局；源码中的 iOS 27 异步音频接口也需要支持该接口的 SDK。未签名，安装前需要自行重签。
+当前测试版：**0.3.3 Beta 1（build 9）**，增加音乐标签和内嵌专辑封面预览，并改进音视频有界缓冲与 6／8／12／16 GB 资源分档；只读，不修改音乐文件，不联网检索封面。新增能力与测试范围见 [发布说明](docs/RELEASE-0.3.3-beta.1.md)、[音乐标签说明](docs/MUSIC-TAGS-0.3.3.md) 和 [媒体调度与资源预算](docs/MEDIA-PREVIEW.md)。此前本地 build 6 IPA 不代表本次发布。
 
-本版继承 0.3.1 的 UDF / 混合 ISO、准备阶段进度、固定性能面板和存储检查改进；新增整目录/全部内容和文件/文件夹多选解压。修订 UTF-8 初始化兼容性，并将初始化失败与真正的内存额度不足区分，显示具体阶段、errno 和已用编解码内存。2026-10-07 已在 iPad Pro 11-inch (M4) / iPadOS 27.2 真机验证本地 ZIP/TAR、6 GB UDF ISO、本地大 ZIP 的完整 SHA-256 往返，以及 exFAT USB 上的 ISO 解压和 ZIP 打包／回读。本轮不改动应用代码，发布仍为已测试的 build 5；未验证场景与已发现问题见 [真机测试记录](docs/PHYSICAL-QA-0.3.2.md)。
+最低系统：**iOS / iPadOS 26.0**。该 IPA 使用 27.1 SDK 构建 Duo 专用布局；源码中的 iOS 27 异步音频接口也需要支持该接口的 SDK。未签名，安装前需要自行重签。
 
-0.3.2 已接入 **FFmpeg 9.0.2＋dav1d 1.5.4 源码解码后端**，支持有界图片、音频、视频预览，以及 UTF-8 / 带 BOM 的 UTF-16 文本。真实 AV1＋AAC 视频、FLAC、JPEG、UTF-16 日志的主机解码和 App ZIP/TAR 打包往返已验证；同一台 iPad 模拟器六项原生回归全部通过，包含媒体播放／暂停／跳转。真机图片、文本和音视频短时播放／暂停已验证，但未验证完整播放、声音可听性和音画同步。未使用系统压缩媒体解码器替代；系统仅负责显示像素和播放 PCM。密码 RAR 必须解密、校验后才能预览；密码 ZIP 仍不支持，不会绕过拦截。PDF / Office 文档渲染未实现。范围、限制和许可见 [媒体预览说明](docs/MEDIA-PREVIEW.md)。
+本版继承 UDF / 混合 ISO、准备阶段进度、固定性能面板、存储检查、整目录及跨目录多选解压，以及 UTF-8 初始化修复。0.3.2 已在 iPad M4 真机验证本地 ZIP/TAR、大 ISO/ZIP SHA-256 往返及 exFAT USB 读写；本轮没有复测 USB/ISO，历史验证与遗留问题见 [真机测试记录](docs/PHYSICAL-QA-0.3.2.md)。
+
+采用 **FFmpeg 9.0.2＋dav1d 1.5.4 源码解码后端**，支持有界图片、音频、视频及音乐标签／封面预览，以及 UTF-8 / 带 BOM 的 UTF-16 文本。iPhone Air 上真实 AV1＋AAC 完整播放并复测，用户确认 build 9 音画正常、没有退出；真实 FLAC、内嵌封面、JPEG、UTF-16 日志及密码 RAR 门禁已验证。系统仅负责显示像素和播放 PCM，不替代开源压缩媒体解码器。密码 ZIP 仍不支持，不会绕过拦截；PDF / Office 渲染未实现。范围和许可见 [媒体预览说明](docs/MEDIA-PREVIEW.md)。
 
 <img src="ArchiveDeskIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" alt="ArchiveDesk icon">
 
 ## 下载与安装
 
-在 [v0.3.2-beta.1](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.3.2-beta.1) 下载 `ArchiveDesk-0.3.2-unsigned.ipa`。
+在 [v0.3.3-beta.1](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.3.3-beta.1) 下载 `ArchiveDesk-0.3.3-unsigned.ipa`（build 9）。
 
-**新版增加整目录／跨目录多选解压、开源媒体预览和 UTF-16 文本，并统一按 iOS 系统授权及实际可写能力选择输出目录。** 多来源 ZIP/TAR 打包、密码 RAR 解压、CPU/RAM、速度／进度和闭箱／开箱图标继续保留。同一 Release 附带完整对应源码 `ArchiveDesk-0.3.2-source.tar.gz`、匹配静态重链接材料 `ArchiveDesk-0.3.2-relink-kit.tar.gz` 和 SHA-256 校验清单。旧 Release 保留，私人媒体测试样本不发布。
+**新版增加音乐标签／内嵌封面，修正 AV1 调度并采用有界资源策略。** 多来源 ZIP/TAR、整目录／跨目录多选解压、密码 RAR、CPU/RAM、速度／进度和闭箱／开箱图标继续保留。同一 Release 附带完整对应源码 `ArchiveDesk-0.3.3-source.tar.gz`、匹配静态重链接材料 `ArchiveDesk-0.3.3-relink-kit.tar.gz` 和 SHA-256 校验清单。旧 Release 保留，私人媒体测试样本不发布。
 
 **这是未签名的 arm64 真机 IPA，不是模拟器包，不能直接安装。** 安装前必须使用自己的有效 Apple 签名证书及描述文件重新签名。也可以在 Xcode 中选择自己的 Team、调整 Bundle Identifier 后运行到设备。此发布不是 App Store / TestFlight 发行版，不承诺第三方重签工具的兼容性。
 
-本版真机 Release 使用 Xcode 27.1 beta（27A9269）/ iOS 27.1 SDK（24A94403）构建，最低系统仍为 26.0。核心 111 项通过，2 项桌面文件协调明确跳过；同一台 iPad Pro 11-inch M5 / iPadOS 27.2 模拟器六项 UI 回归通过，异步音频优化后媒体专项再次通过。对应静态重链接实际执行成功。iPad M4 真机上 93.7 MB 本地 ZIP/TAR 创建未重现旧版立即报内存错误；本地大 ZIP 往返的 1,069 个文件共 6,453,788,028 字节全部 SHA-256 一致。USB 完成约 6.36 GB ISO 解压、6.45 GB 来源 ZIP 打包和完整回读；USB 输出尚未独立做写后 SHA-256。仍待验证 23 GB 来源、只读／拔盘／网盘、低内存及能耗；任务页保存目录显示旧值和 USB 等待段未修复。详见 [真机测试记录](docs/PHYSICAL-QA-0.3.2.md) 和 [优化记录](docs/OPTIMIZATION-0.3.0.md)。
+本版真机 Release 使用 Xcode 27.1 beta（27A9269）/ iOS 27.1 SDK（24A94403）构建，最低系统仍为 26.0。最终核心 118 项通过、无跳过；四档预算／有界缓冲、音乐与加密媒体主机专项通过。同一台 iPad M5 / iPadOS 27.2 模拟器通过常规及强制 6 GB 媒体策略回归；这不是实际 6 GB 硬件或内存压力测试。iPhone Air 实测及历史 iPad/USB 验证边界见 [本版说明](docs/RELEASE-0.3.3-beta.1.md) 和 [历史真机记录](docs/PHYSICAL-QA-0.3.2.md)。23 GB、只读／拔盘／网盘、实际低内存与能耗仍待验证；任务页保存目录显示旧值和 USB 等待段未修复。
 
-IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.2-SHA256SUMS.txt`。本次 IPA 与之前提供的本地 0.3.2 build 5 相同，不必仅为 GitHub 发布重新安装。
+IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.3-SHA256SUMS.txt`。这是 build 9；已安装该版的测试设备不必仅为发布重新安装。
 
 ## 已实现的功能
 
@@ -28,6 +30,7 @@ IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.2-SHA256SUMS.txt`。本次 
 - 文件夹层级浏览、搜索、文件选择和条目详情。
 - 预览不超过 256 KiB 的 UTF-8 文本；0.3.2 增加带 BOM 的 UTF-16：TXT、Markdown、JSON、XML、CSV、日志、Swift、PLIST、YAML 等。
 - 提供纯开源图片、音视频解码预览，播放／暂停／跳转；只暂存选中的条目，媒体上限 512 MiB、图片 32 MiB，输出像素最长边 1280。不是无限制媒体播放器。
+- 音乐内嵌标签、专辑封面及音频参数只读查看；不存在封面时不联网查找，也不修改源文件。
 - 解压单个文件，保留相对目录结构；提供显式“解压全部内容”“解压整个文件夹”，以及跨目录多选文件/文件夹。选中文件夹包含子目录，父子重叠选择不重复写出。
 - 反复从“文件”添加不同来源的文件/文件夹，组合为 ZIP（Deflate）或未压缩 TAR；保留空目录，同名来源自动编号，不修改原文件。
 - RAR4/RAR5 密码解压；已验证普通加密、加密文件名、solid、solid 加密文件名的 8 种上游样本。打开加密目录、预览和解压分别输入密码，不保存密码。
@@ -73,7 +76,9 @@ IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.2-SHA256SUMS.txt`。本次 
 
 ## iOS 性能面板与内存保护
 
-文件详情、创建压缩包和任务页新增应用进程 CPU、RAM、压缩／解压字节进度、速度与用时。CPU 100% 表示一个核心（多核心可超过 100%）；RAM 使用 Mach `phys_footprint`，不是设备总内存或全系统占用。前台约每秒采样一次，仅刷新性能面板；进入后台停止采样并取消任务。
+文件详情、创建压缩包和任务页新增应用进程 CPU、RAM、压缩／解压字节进度、速度与用时。CPU 100% 表示一个核心（多核心可超过 100%）；RAM 使用 Mach `phys_footprint`，不是设备总内存或全系统占用。工作／播放期间前台约每秒采样一次，空闲约每 3 秒一次；进入后台停止采样并取消任务。
+
+build 9 按 6／8／12／16 GB 物理 RAM 分档设置媒体输出和视频队列上限（480／640 长边，6／8／12／12 MiB），音频缓冲不随低内存档缩减。预览开始时也参考低电量模式、温度状态及应用实时余量；暂停／结束后停止画面刷新轮询。已在同一台模拟器验证正常档和强制 6 GB 策略，但这不能替代真正 6／8 GB 设备的性能与 jetsam 测试。build 9 的同一段 AV1/AAC 已由 iPhone Air 用户确认音画正常、未退出，不作所有设备／媒体流畅的保证。
 
 压缩速度按读取的未压缩输入计算，解压按实际写出的输出计算；运行时显示采样区间速度，结束显示全任务平均速度。校验、flush、重命名完成前不显示 100%；未知／空内容采用不定进度。Solid 格式内部跳过、文件协调及校验期间可能没有新输出，速度和进度会停留。已处理字节不代表失败任务保留了输出。
 
@@ -96,7 +101,7 @@ I/O 保持 256 KiB 分块，加入分块 autorelease pool；批量打包和来�
 
 用具备对应 SDK 的 Xcode 打开 `ArchiveDeskIOS.xcodeproj`，选择 `ArchiveDeskIOS` scheme。Duo 调试使用 `ArchiveDeskIOS-DuoDebug`。
 
-**复现本次 IPA 建议下载 Release 中明确命名的 `ArchiveDesk-0.3.2-source.tar.gz`。** 它是完整对应项目，含新功能、依赖与发布说明，并与重链接材料配套。GitHub 自动生成的 “Source code (zip/tar.gz)” 是发布标签对应的仓库快照。
+**复现本次 IPA 建议下载 Release 中明确命名的 `ArchiveDesk-0.3.3-source.tar.gz`。** 它是完整对应项目，含新功能、依赖与发布说明，并与重链接材料配套。GitHub 自动生成的 “Source code (zip/tar.gz)” 是发布标签对应的仓库快照。
 
 仓库附带 XCFramework 和校验过的上游源码压缩包。编译应用不需要安装桌面 7-Zip。未签名 Release 示例：
 
@@ -105,7 +110,7 @@ export DEVELOPER_DIR=/Applications/Xcode-27.1-beta.app/Contents/Developer
 zsh scripts/build-ios.sh iphoneos Release
 zsh scripts/package-unsigned-ipa.sh \
   "$PWD/work/Build-iphoneos-Release/Build/Products/Release-iphoneos/ArchiveDeskIOS.app" \
-  "$PWD/outputs/ArchiveDesk-0.3.2-unsigned.ipa"
+  "$PWD/outputs/ArchiveDesk-0.3.3-unsigned.ipa"
 ```
 
 若本地路径不同，调整 `DEVELOPER_DIR`。受限执行环境可能阻止 SwiftUI 宏插件或模拟器服务，请使用原生 Xcode 构建。签名分发请在 Xcode 选择自己的 Team，并按自己的描述文件与分发方式 Archive / Export。
@@ -145,7 +150,7 @@ RAR 后端包含 LGPL-2.1-or-later 与 unRAR 附加限制；Release 同时提供
 
 ## English summary
 
-ArchiveDesk 0.3.2 Beta 1 (build 5) is an unsigned arm64 iOS/iPadOS 26+ archive
+ArchiveDesk 0.3.3 Beta 1 (build 9) is an unsigned arm64 iOS/iPadOS 26+ archive
 browser, safe extractor and multi-source ZIP/TAR packer. It includes CPU/RAM,
 transfer metrics, adaptive iPhone/iPad/Duo layouts, whole-folder/multi-selection
 extraction, source-built FFmpeg/dav1d bounded preview, and BOM-marked UTF-16 text.
@@ -158,12 +163,17 @@ Encrypted ZIP is not supported; encrypted contents never reach a preview decoder
 without successful password decryption and integrity checks. Re-sign the IPA
 before installation. Corresponding full source, matching arm64 app objects,
 media/archive libraries, relinking materials and checksums accompany the release.
-Host core checks passed 111 tests with two explicitly skipped desktop coordination
-checks; one iPad simulator passed six UI tests and a later media regression.
+Music previews now include read-only embedded tags and JPEG/PNG album art.
+Bounded AV1/audio scheduling, adaptive 6/8/12/16 GB profiles and reduced idle
+polling improve resource behavior without claiming a whole-process memory cap.
+Final host core checks passed 118 tests without skips; the same iPad simulator
+passed normal and forced-6-GB media cases, not physical memory-pressure tests.
+The iPhone Air user confirmed normal picture/sound and no exit on build 9.
 On a physical iPad Pro 11-inch (M4) / iPadOS 27.2, local ZIP/TAR packing and
 the large ISO/ZIP round-trip passed; all 1,069 local round-trip files matched
 SHA-256. exFAT USB ISO extraction, ZIP creation and full ZIP extraction completed,
 but independent post-write USB hashes remain unverified. The 23 GB scenario,
 read-only/unplug/cloud cases and energy/memory-pressure behavior remain untested.
 Stale packing output-path display and USB zero-speed wait periods remain open.
-The published IPA is unchanged build 5, not a new bug-fix binary.
+The published IPA is build 9, not the earlier local build 6. Private test media,
+device logs and signing credentials are excluded from all release assets.

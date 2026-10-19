@@ -123,7 +123,10 @@ final class WorkspaceModel: ObservableObject {
                 self?.performance.process = sample
                 self?.refreshTransfer()
                 if MemoryPolicy.shouldStop(headroom: sample.headroomBytes) { self?.handleMemoryPressure() }
-                do { try await Task.sleep(for: .seconds(1)) } catch { break }
+                // Keep live task metrics at 1 Hz; idle screens need not issue
+                // expensive task_info queries and SwiftUI updates every second.
+                let active = self?.isBusy == true || self?.mediaPreview.isPlaying == true || self?.mediaPreview.phase == .preparing
+                do { try await Task.sleep(for: .seconds(active ? 1 : 3)) } catch { break }
             }
         }
     }
