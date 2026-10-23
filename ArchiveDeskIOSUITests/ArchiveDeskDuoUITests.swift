@@ -2,6 +2,71 @@ import XCTest
 
 final class ArchiveDeskDuoUITests: XCTestCase {
     @MainActor
+    func testLegacyEncodingPreviewAndRecovery() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "--fixture-legacy-encoding", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
+        app.launch()
+        let note = app.descendants(matching: .any)["entry.不读我刷成砖.txt"].firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 20), app.debugDescription)
+        note.tap()
+        XCTAssertTrue(app.scrollViews["textPreview"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "中文测试")).firstMatch.exists)
+        capture(app, name: "GBK 中文文件名与正文自动预览")
+        app.buttons["textEncoding"].firstMatch.tap()
+        app.buttons["textEncoding.UTF-8"].firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["textDecodingUnavailable"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["textEncoding"].firstMatch.tap()
+        app.buttons["textEncoding.GBK"].firstMatch.tap()
+        XCTAssertTrue(app.scrollViews["textPreview"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "中文测试")).firstMatch.exists)
+        capture(app, name: "错误编码后手动 GBK 恢复")
+        let back = app.buttons["BackButton"].firstMatch.exists ? app.buttons["BackButton"].firstMatch : app.navigationBars.buttons.element(boundBy: 0)
+        if !note.isHittable && back.exists { back.tap() }
+        app.buttons["zipEncoding"].firstMatch.tap()
+        app.buttons["zipEncoding.CP437"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["zipEncoding"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(note.exists)
+        app.buttons["zipEncoding"].firstMatch.tap()
+        app.buttons["zipEncoding.GBK"].firstMatch.tap()
+        XCTAssertTrue(note.waitForExistence(timeout: 10), app.debugDescription)
+        capture(app, name: "ZIP 文件名编码手动恢复")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
+    @MainActor
+    func testOriginalLegacyZIPPreviewAndExtraction() throws {
+        let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("work/encoding-fixtures/UserLegacy.zip")
+        guard FileManager.default.fileExists(atPath: fixture.path) else { throw XCTSkip("Optional private reproduction ZIP not supplied") }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--media-fixture-path=\(fixture.path)", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let note = app.descendants(matching: .any)["entry.不读我刷成砖.txt"].firstMatch
+        XCTAssertTrue(app.buttons["extractFolderOrAll"].firstMatch.waitForExistence(timeout: 25))
+        for _ in 0..<8 where !note.exists || !note.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(note.waitForExistence(timeout: 5), app.debugDescription)
+        for name in ["ZY1280最新说明书-V350.pdf", "核实硬件版本再刷对应固件.jpg"] {
+            XCTAssertTrue(app.descendants(matching: .any)["entry.\(name)"].firstMatch.exists, app.debugDescription)
+        }
+        capture(app, name: "用户原 ZIP — 中文目录")
+        waitForStableHitTarget(note); note.tap()
+        XCTAssertTrue(app.scrollViews["textPreview"].firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "刷")).firstMatch.exists)
+        capture(app, name: "用户原 ZIP — GBK 正文")
+        let extract = extractionAction(in: app)
+        waitForStableHitTarget(extract); extract.tap()
+        let local = app.buttons["ArchiveDesk on this device"].firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); local.tap()
+        let receipt = app.descendants(matching: .any)["extractionReceipt"].firstMatch
+        for _ in 0..<12 where !receipt.exists { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+        capture(app, name: "用户原 ZIP — 中文 TXT 解压完成")
+    }
+
+    @MainActor
     func testMusicTagsChineseLandscapeAndLargeText() throws {
         let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("work/music-tag-fixtures/MusicTags.zip")

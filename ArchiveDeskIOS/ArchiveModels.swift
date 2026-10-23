@@ -1,4 +1,5 @@
 import Foundation
+import CArchive
 
 struct ArchiveEntry: Identifiable, Hashable, Sendable {
     let id: Int
@@ -81,11 +82,83 @@ enum ArchivePreviewKind: Sendable {
     }
 }
 
-/// Unicode decoding uses Swift's open-source standard-library codecs. No
-/// heuristic legacy-codepage guesses or unbounded document loading.
+enum ArchiveEncoding: String, CaseIterable, Identifiable, Sendable {
+    case auto, utf8 = "UTF-8", utf16LE = "UTF-16LE", utf16BE = "UTF-16BE"
+    case gb18030 = "GB18030", gbk = "GBK", shiftJIS = "CP932", big5 = "BIG5", korean = "CP949"
+    case cp437 = "CP437", cp850 = "CP850", western = "WINDOWS-1252", cp866 = "CP866", cyrillic = "WINDOWS-1251"
+    var id: Self { self }
+    var title: String { self == .auto ? String(localized: "Auto") : rawValue }
+    static var filenameOptions: [Self] { allCases.filter { $0 != .utf16LE && $0 != .utf16BE } }
+    private static let commonHan: Set<UInt32> = Set("的一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主发年动同工也能下过子说产种面而方后多定行学法所民得经之进着等部度家电力里如水化高自二理起小物现实加量都两体制机当使点从业本去把性好应开它合还因由其些然前外天日那社义事平形相全表间样与关各重新线内数正心看原文无位入常你压缩文件目录读刷砖最说明书核硬版本再对应固件音楽日本語説明書測試檔案資料繁體中文".unicodeScalars.map(\.value))
+
+    /// Strict, bounded conversion through the already-linked open-source iconv
+    /// implementation. Never use replacement characters or //IGNORE.
+    static func convert(_ data: Data, from: String, to: String) -> Data? {
+        // UTF-8 round-trip input can be larger than the original legacy bytes.
+        guard data.count <= 1024 * 1024 else { return nil }
+        let descriptor = iconv_open(to, from)
+        guard descriptor != OpaquePointer(bitPattern: -1), let descriptor else { return nil }
+        defer { iconv_close(descriptor) }
+        var input = Array(data), output = [UInt8](repeating: 0, count: max(16, data.count * 4 + 16))
+        var remaining = input.count, available = output.count
+        let status = input.withUnsafeMutableBytes { source in
+            output.withUnsafeMutableBytes { destination in
+                var sourcePointer = source.baseAddress?.assumingMemoryBound(to: CChar.self)
+                var destinationPointer = destination.baseAddress?.assumingMemoryBound(to: CChar.self)
+                return iconv(descriptor, &sourcePointer, &remaining, &destinationPointer, &available)
+            }
+        }
+        guard status == 0, remaining == 0 else { return nil }
+        return Data(output.prefix(output.count - available))
+    }
+    func decode(_ data: Data) -> String? {
+        guard data.count <= 256 * 1024, self != .auto, let bytes = Self.convert(data, from: rawValue, to: "UTF-8"),
+              let text = String(data: bytes, encoding: .utf8),
+              Self.convert(bytes, from: "UTF-8", to: rawValue) == data else { return nil }
+        return text
+    }
+    /// Conservative fallback, not universal encoding detection. Short/ambiguous
+    /// names retain CP437; the user can override the choice independently.
+    static func guess(_ data: Data) -> Self? {
+        guard data.filter({ $0 >= 128 }).count >= 4 else { return nil }
+        var candidates: [(Self, Int)] = []
+        for encoding: Self in [.gb18030, .shiftJIS, .big5, .korean] {
+            if Task.isCancelled { return nil }
+            guard let text = encoding.decode(data) else { continue }
+            var score = 0
+            for scalar in text.unicodeScalars {
+                let n = scalar.value
+                if commonHan.contains(n) { score += 6 }
+                else if (0x4e00...0x9fff).contains(n) { score += 1 }
+                else if (0x3040...0x30ff).contains(n) || (0xac00...0xd7af).contains(n) { score += 4 }
+                else if (0xff61...0xff9f).contains(n) { score -= 3 }
+                else if n >= 128 { score -= 4 }
+            }
+            candidates.append((encoding, score))
+        }
+        candidates.sort { $0.1 > $1.1 }
+        guard let first = candidates.first, first.1 >= 8,
+              candidates.count == 1 || first.1 - candidates[1].1 >= 3 else { return nil }
+        return first.0
+    }
+}
+
+/// Unicode uses Swift codecs; legacy text uses strict iconv, bounded to 256 KiB.
 enum ArchiveTextPreview {
-    static func decode(_ data: Data) -> String? {
+    static func decode(_ data: Data, encoding: ArchiveEncoding = .auto) -> String? {
         guard data.count <= 256 * 1024 else { return nil }
+        let result: String?
+        if encoding != .auto { result = encoding.decode(data) }
+        else { result = unicode(data) ?? (hasBOM(data) ? nil : ArchiveEncoding.guess(data)?.decode(data)) }
+        guard let result, !result.unicodeScalars.contains(where: {
+            $0.value == 0 || ($0.value < 32 && ![9, 10, 13].contains($0.value)) || (127...159).contains($0.value)
+        }) else { return nil }
+        return result
+    }
+    private static func hasBOM(_ data: Data) -> Bool {
+        data.starts(with: [0xff, 0xfe]) || data.starts(with: [0xfe, 0xff]) || data.starts(with: [0xef, 0xbb, 0xbf])
+    }
+    private static func unicode(_ data: Data) -> String? {
         if data.starts(with: [0xff, 0xfe]) || data.starts(with: [0xfe, 0xff]) {
             guard data.count % 2 == 0 else { return nil }
             let little = data.first == 0xff

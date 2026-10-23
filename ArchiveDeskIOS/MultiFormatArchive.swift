@@ -130,8 +130,8 @@ final class NativeArchiveReader {
         return count
     }
     static func stream(_ expected: ArchiveEntry, from url: URL, body: (Data) throws -> Void) throws {
-        // Match the strict ZIP parser's unflagged CP437 default. Native ZIP
-        // keeps its UTF-8 flag/Unicode extra handling; do not guess locale names.
+        // Strict ZIP uses its own offset-based raw Deflate reader. This path
+        // remains for native formats and legacy callers using CP437 ZIP names.
         let reader = try NativeArchiveReader(url: url, zipHeaderCharset: expected.nativeFormat == nil ? "CP437" : nil)
         while let entry = try reader.next() {
             let path = try reader.path(entry)
@@ -218,12 +218,15 @@ struct MultiFormatArchive: Sendable {
         return false
     }
     func previewText(_ entry: ArchiveEntry) throws -> String? {
-        if let udfBackend { return try udfBackend.previewText(entry) }
+        try previewTextBytes(entry).flatMap { ArchiveTextPreview.decode($0) }
+    }
+    func previewTextBytes(_ entry: ArchiveEntry) throws -> Data? {
+        if let udfBackend { return try udfBackend.previewTextBytes(entry) }
         guard entry.isExtractable, !entry.isDirectory, entry.uncompressedSize <= 256 * 1024,
               ["txt", "md", "json", "xml", "csv", "log", "swift", "plist", "yaml", "yml"].contains((entry.path as NSString).pathExtension.lowercased()) else { return nil }
         var data = Data()
         try NativeArchiveReader.stream(entry, from: url) { data.append($0) }
-        return ArchiveTextPreview.decode(data)
+        return data
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true,
                  progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {

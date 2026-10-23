@@ -6,10 +6,10 @@ in original link order, matching ArchiveRar/ArchiveCodecs/ArchiveMedia static li
 unsigned app resources without the executable. No Apple SDK, credentials,
 certificates or provisioning profiles are included.
 
-Original toolchain: Xcode 27.1 beta 27A9269, iPhoneOS 27.1 SDK 24A94403,
+Original toolchain: Xcode 27.2 beta 27B5028f, iPhoneOS 27.2 SDK 24B5089g,
 Swift 6.4, target arm64-apple-ios26.0, Release Swift -O. Use that SDK to
-preserve the Duo-specific public APIs. A newer SDK compiles the project's
-standard layout branch instead; it is not the identical original build.
+preserve the original public API build and object compatibility; a different
+SDK is not the identical original build.
 
 `CodecNotices.txt` retains full third-party terms. `modified-rar-sources.tar.gz`
 contains all six modified upstream files, including the UDF metadata limits in
@@ -24,7 +24,7 @@ as `ArchiveDesk-@VERSION@-source.tar.gz` in the same Release. See that source's
 shasum -a 256 -c SHA256SUMS
 mkdir source
 tar -xzf /path/to/ArchiveDesk-@VERSION@-source.tar.gz -C source --strip-components=1
-export DEVELOPER_DIR=/Applications/Xcode-27.1-beta.app/Contents/Developer
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 cd source
 # Creates work/rar-sources and applies checksum-pinned reproducible modifications.
 RAR_SLICES=ios-arm64 zsh scripts/build-rar-codecs.sh

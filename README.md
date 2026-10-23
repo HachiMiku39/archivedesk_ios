@@ -2,9 +2,9 @@
 
 ArchiveDesk 是面向 iPhone、iPad 和 iPhone Duo 自适应界面的压缩包浏览与安全解压工具。采用 SwiftUI 和进程内原生解码引擎，不依赖桌面版 7-Zip 命令行程序。
 
-当前测试版：**0.3.3 Beta 1（build 9）**，增加音乐标签和内嵌专辑封面预览，并改进音视频有界缓冲与 6／8／12／16 GB 资源分档；只读，不修改音乐文件，不联网检索封面。新增能力与测试范围见 [发布说明](docs/RELEASE-0.3.3-beta.1.md)、[音乐标签说明](docs/MUSIC-TAGS-0.3.3.md) 和 [媒体调度与资源预算](docs/MEDIA-PREVIEW.md)。此前本地 build 6 IPA 不代表本次发布。
+当前测试版：**0.3.3 Beta 2（build 10）**，修复旧式中文 ZIP 文件名乱码和 GBK 文本无法预览，新增独立文件名／正文编码菜单，并让 ZIP Deflate 按已校验的数据偏移流式解码。保留音乐标签、封面预览和 6／8／12／16 GB 资源策略。范围与验证见 [本版发布说明](docs/RELEASE-0.3.3-beta.2.md)、[编码专项记录](docs/ENCODING-QA-BUILD10.md)、[音乐标签说明](docs/MUSIC-TAGS-0.3.3.md) 和 [媒体调度与资源预算](docs/MEDIA-PREVIEW.md)。
 
-最低系统：**iOS / iPadOS 26.0**。该 IPA 使用 27.1 SDK 构建 Duo 专用布局；源码中的 iOS 27 异步音频接口也需要支持该接口的 SDK。未签名，安装前需要自行重签。
+最低系统：**iOS / iPadOS 26.0**。本版使用 Xcode 27.2 beta / iOS 27.2 SDK 构建。未签名，安装前需要自行重签。
 
 本版继承 UDF / 混合 ISO、准备阶段进度、固定性能面板、存储检查、整目录及跨目录多选解压，以及 UTF-8 初始化修复。0.3.2 已在 iPad M4 真机验证本地 ZIP/TAR、大 ISO/ZIP SHA-256 往返及 exFAT USB 读写；本轮没有复测 USB/ISO，历史验证与遗留问题见 [真机测试记录](docs/PHYSICAL-QA-0.3.2.md)。
 
@@ -14,27 +14,27 @@ ArchiveDesk 是面向 iPhone、iPad 和 iPhone Duo 自适应界面的压缩包�
 
 ## 下载与安装
 
-在 [v0.3.3-beta.1](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.3.3-beta.1) 下载 `ArchiveDesk-0.3.3-unsigned.ipa`（build 9）。
+在 [v0.3.3-beta.2](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.3.3-beta.2) 下载 `ArchiveDesk-0.3.3-unsigned.ipa`（build 10）。
 
-**新版增加音乐标签／内嵌封面，修正 AV1 调度并采用有界资源策略。** 多来源 ZIP/TAR、整目录／跨目录多选解压、密码 RAR、CPU/RAM、速度／进度和闭箱／开箱图标继续保留。同一 Release 附带完整对应源码 `ArchiveDesk-0.3.3-source.tar.gz`、匹配静态重链接材料 `ArchiveDesk-0.3.3-relink-kit.tar.gz` 和 SHA-256 校验清单。旧 Release 保留，私人媒体测试样本不发布。
+**新版修复 ZIP 中文文件名和旧编码文本预览。** 多来源 ZIP/TAR、整目录／跨目录多选解压、密码 RAR、媒体及音乐标签、CPU/RAM、速度／进度和闭箱／开箱图标继续保留。同一 Release 附带完整对应源码 `ArchiveDesk-0.3.3-source.tar.gz`、匹配静态重链接材料 `ArchiveDesk-0.3.3-relink-kit.tar.gz` 和 SHA-256 校验清单。旧 Release 保留，私人测试文件和截图不发布。
 
 **这是未签名的 arm64 真机 IPA，不是模拟器包，不能直接安装。** 安装前必须使用自己的有效 Apple 签名证书及描述文件重新签名。也可以在 Xcode 中选择自己的 Team、调整 Bundle Identifier 后运行到设备。此发布不是 App Store / TestFlight 发行版，不承诺第三方重签工具的兼容性。
 
-本版真机 Release 使用 Xcode 27.1 beta（27A9269）/ iOS 27.1 SDK（24A94403）构建，最低系统仍为 26.0。最终核心 118 项通过、无跳过；四档预算／有界缓冲、音乐与加密媒体主机专项通过。同一台 iPad M5 / iPadOS 27.2 模拟器通过常规及强制 6 GB 媒体策略回归；这不是实际 6 GB 硬件或内存压力测试。iPhone Air 实测及历史 iPad/USB 验证边界见 [本版说明](docs/RELEASE-0.3.3-beta.1.md) 和 [历史真机记录](docs/PHYSICAL-QA-0.3.2.md)。23 GB、只读／拔盘／网盘、实际低内存与能耗仍待验证；任务页保存目录显示旧值和 USB 等待段未修复。
+本轮验证：编码专项 67 项通过；核心 115 项通过、两项桌面文件协调明确跳过；格式 36 组及打包／密码 RAR 20 组通过。同一台 iPhone 18 Pro / iOS 27.2 模拟器 3 项 UI 测试通过、0 失败、0 跳过，覆盖原 ZIP 的中文目录、TXT 预览／解压、编码切换恢复和 CP437／Deflate 回归。本轮未重新测试真机、USB／ISO或 AV1 性能；此前 iPhone Air 与 iPad 验证只作为历史证据，见 [Beta 1 说明](docs/RELEASE-0.3.3-beta.1.md) 和 [真机记录](docs/PHYSICAL-QA-0.3.2.md)。23 GB、只读／拔盘／网盘、实际低内存与能耗仍待验证；任务页保存目录显示旧值和 USB 等待段未修复。
 
-IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.3-SHA256SUMS.txt`。这是 build 9；已安装该版的测试设备不必仅为发布重新安装。
+IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.3-SHA256SUMS.txt`。这是 build 10；旧 build 9 不含本次编码修复。
 
 ## 已实现的功能
 
 - 通过系统“文件”选择压缩包；支持本地、iCloud、外置存储及其他文件提供商的读取。
 - 文件夹层级浏览、搜索、文件选择和条目详情。
-- 预览不超过 256 KiB 的 UTF-8 文本；0.3.2 增加带 BOM 的 UTF-16：TXT、Markdown、JSON、XML、CSV、日志、Swift、PLIST、YAML 等。
+- 预览不超过 256 KiB 的文本：TXT、Markdown、JSON、XML、CSV、日志、Swift、PLIST、YAML 等。build 10 增加旧编码自动识别和独立正文编码菜单，支持 GBK／GB18030、CP932、Big5、CP949、CP437／850、Windows-1252／1251、CP866，以及 UTF-8／UTF-16LE／BE。自动识别有歧义时可手动切换，不显示二进制数据。
 - 提供纯开源图片、音视频解码预览，播放／暂停／跳转；只暂存选中的条目，媒体上限 512 MiB、图片 32 MiB，输出像素最长边 1280。不是无限制媒体播放器。
 - 音乐内嵌标签、专辑封面及音频参数只读查看；不存在封面时不联网查找，也不修改源文件。
 - 解压单个文件，保留相对目录结构；提供显式“解压全部内容”“解压整个文件夹”，以及跨目录多选文件/文件夹。选中文件夹包含子目录，父子重叠选择不重复写出。
 - 反复从“文件”添加不同来源的文件/文件夹，组合为 ZIP（Deflate）或未压缩 TAR；保留空目录，同名来源自动编号，不修改原文件。
 - RAR4/RAR5 密码解压；已验证普通加密、加密文件名、solid、solid 加密文件名的 8 种上游样本。打开加密目录、预览和解压分别输入密码，不保存密码。
-- 支持中文、日文及 UTF-8 文件名；ZIP 未标记 UTF-8 的文件名采用 CP437 默认规则。
+- ZIP 文件名优先遵守 UTF-8 标记和 CRC 有效的 Unicode 扩展；未标记的旧 ZIP 尝试识别区域编码，无法可靠识别时回退 CP437。提供独立文件名编码菜单，重新索引后用于浏览、预览与解压；不修改原 ZIP。
 - iPhone / iPad 的紧凑和宽屏布局；Duo 折叠布局、内外屏切换和旋转时保留选中项及预览状态。
 - 按实际详情区宽度排版，窄窗口及辅助功能大字体使用可滚动单列；直接显示解压操作，支持 ⌘O 打开、⌘E 解压。
 - 目录索引/排序在后台计算并缓存当前目录；搜索去抖 200 ms，取消旧结果，选中项和性能采样不重复扫描整个压缩包。

@@ -1,5 +1,7 @@
 #include "archive.h"
 #include "archive_entry.h"
+#include <iconv.h>
+#include <zlib.h>
 void *archivedesk_codec_enter_utf8_locale(void);
 void archivedesk_codec_leave_utf8_locale(void *);
 #include <stddef.h>

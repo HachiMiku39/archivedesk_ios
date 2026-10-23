@@ -86,3 +86,7 @@
 "Embedded artwork could not be previewed. Audio playback is still available." = "Embedded artwork could not be previewed. Audio playback is still available.";
 "Some music tags were shortened for preview safety." = "Some music tags were shortened for preview safety.";
 "Tags are read-only. Embedded JPEG/PNG artwork only; no online lookup." = "Tags are read-only. Embedded JPEG/PNG artwork only; no online lookup.";
+"Auto" = "Auto";
+"ZIP filename encoding" = "ZIP filename encoding";
+"Text encoding" = "Text encoding";
+"Cannot decode this text safely. Try another text encoding. Binary data is not displayed." = "Cannot decode this text safely. Try another text encoding. Binary data is not displayed.";

@@ -105,6 +105,16 @@ struct RootView: View {
                 if model.archive != nil {
                     List(selection: Binding(get: { model.navigation.selection }, set: { model.select($0) })) {
                         Section {
+                            if let encoding = model.zipFilenameEncoding {
+                                Menu {
+                                    ForEach(ArchiveEncoding.filenameOptions) { option in
+                                        Button(option.title) { model.changeZIPEncoding(option) }
+                                            .accessibilityIdentifier("zipEncoding.\(option.rawValue)")
+                                    }
+                                } label: {
+                                    LabeledContent("ZIP filename encoding", value: encoding.title)
+                                }.disabled(model.isBusy).accessibilityIdentifier("zipEncoding")
+                            }
                             Button(isSelectingEntries ? String(localized: "Done selecting") : String(localized: "Select items")) {
                                 isSelectingEntries.toggle()
                             }.disabled(model.isBusy).accessibilityIdentifier("toggleExtractionSelection")
@@ -243,7 +253,7 @@ struct EntryDetailView: View {
                     #if DUO_SDK
                     if #available(iOS 27.1, *) {
                         ArrangementView {
-                            EntryPreview(entry: entry, text: model.previewText, media: model.mediaPreview, unlock: { model.select(entry.path) })
+                            EntryPreview(entry: entry, model: model, media: model.mediaPreview, unlock: { model.select(entry.path) })
                         } secondary: { metadata(entry) }
                         .arrangementViewStyle(.split)
                     } else { wideDetail(entry) }
@@ -253,7 +263,7 @@ struct EntryDetailView: View {
                 } else {
                     // Both preview and actions stay reachable at compact widths.
                     Form {
-                        Section("Preview") { EntryPreview(entry: entry, text: model.previewText, media: model.mediaPreview, unlock: { model.select(entry.path) }).frame(minHeight: 180) }
+                        Section("Preview") { EntryPreview(entry: entry, model: model, media: model.mediaPreview, unlock: { model.select(entry.path) }).frame(minHeight: 180) }
                         fields(entry)
                     }
                 }
@@ -266,7 +276,7 @@ struct EntryDetailView: View {
     private func metadata(_ entry: ArchiveEntry) -> some View { Form { fields(entry) } }
     private func wideDetail(_ entry: ArchiveEntry) -> some View {
         HStack(spacing: 0) {
-            EntryPreview(entry: entry, text: model.previewText, media: model.mediaPreview, unlock: { model.select(entry.path) }).frame(maxWidth: .infinity)
+            EntryPreview(entry: entry, model: model, media: model.mediaPreview, unlock: { model.select(entry.path) }).frame(maxWidth: .infinity)
             metadata(entry).frame(maxWidth: .infinity)
         }
     }
@@ -297,7 +307,7 @@ struct EntryDetailView: View {
 
 struct EntryPreview: View {
     let entry: ArchiveEntry
-    let text: String?
+    @ObservedObject var model: WorkspaceModel
     @ObservedObject var media: MediaPreviewModel
     let unlock: () -> Void
     @State private var scrubPosition = 0.0
@@ -370,11 +380,26 @@ struct EntryPreview: View {
                     }
                 }
             }.padding()
-        } else if let text {
-            ScrollView {
-                Text(verbatim: text).font(.body.monospaced()).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding()
-            }.accessibilityIdentifier("textPreview")
+        } else if model.hasTextPreviewBytes {
+            VStack {
+                Menu {
+                    ForEach(ArchiveEncoding.allCases) { option in
+                        Button(option.title) { model.changeTextEncoding(option) }
+                            .accessibilityIdentifier("textEncoding.\(option.rawValue)")
+                    }
+                } label: {
+                    LabeledContent("Text encoding", value: model.textEncoding.title)
+                }.disabled(model.isBusy).accessibilityIdentifier("textEncoding").padding(.horizontal)
+                if let text = model.previewText {
+                    ScrollView {
+                        Text(verbatim: text).font(.body.monospaced()).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding()
+                    }.accessibilityIdentifier("textPreview")
+                } else {
+                    ContentUnavailableView("Preview unavailable", systemImage: "doc", description: Text("Cannot decode this text safely. Try another text encoding. Binary data is not displayed."))
+                        .accessibilityIdentifier("textDecodingUnavailable")
+                }
+            }
         } else {
             ContentUnavailableView("Preview unavailable", systemImage: "doc", description: Text("Preview supports bounded text, images, audio and video using open-source decoders. Extract unsupported files to view them elsewhere."))
         }

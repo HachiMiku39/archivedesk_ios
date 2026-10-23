@@ -1,19 +1,34 @@
 #if DEBUG
 import Foundation
+import CArchive
 
 /// Deterministic local-only fixtures; not included in Release builds.
 enum DebugArchiveFixture {
     static func bytes(_ records: [(String, Data)]) -> Data {
+        encodedBytes(records.map { (Data($0.0.utf8), $0.1) }, flags: 0x800)
+    }
+    static func encodedBytes(_ records: [(Data, Data)], flags: UInt16 = 0, deflated: Bool = false, extra: Data = Data()) -> Data {
         var archive = Data(), directory = Data()
-        for (name, payload) in records {
-            let rawName = Data(name.utf8), crc = CRC32.checksum(payload), offset = archive.count
-            archive.le32(0x04034b50); archive.le16(20); archive.le16(0x800); archive.le16(0); archive.le16(0); archive.le16(0)
-            archive.le32(crc); archive.le32(UInt32(payload.count)); archive.le32(UInt32(payload.count))
-            archive.le16(UInt16(rawName.count)); archive.le16(0); archive.append(rawName); archive.append(payload)
-            directory.le32(0x02014b50); directory.le16(20); directory.le16(20); directory.le16(0x800); directory.le16(0); directory.le16(0); directory.le16(0)
-            directory.le32(crc); directory.le32(UInt32(payload.count)); directory.le32(UInt32(payload.count))
-            directory.le16(UInt16(rawName.count)); directory.le16(0); directory.le16(0); directory.le16(0); directory.le16(0)
-            directory.le32(0); directory.le32(UInt32(offset)); directory.append(rawName)
+        for (rawName, payload) in records {
+            let crc = CRC32.checksum(payload), offset = archive.count
+            let encoded: Data
+            if deflated {
+                var size = compressBound(uLong(payload.count))
+                var compressed = [UInt8](repeating: 0, count: Int(size))
+                let status = payload.withUnsafeBytes { source in
+                    compress2(&compressed, &size, source.bindMemory(to: Bytef.self).baseAddress, uLong(payload.count), Z_DEFAULT_COMPRESSION)
+                }
+                precondition(status == Z_OK)
+                encoded = Data(compressed[2..<Int(size) - 4]) // remove zlib wrapper + Adler32
+            } else { encoded = payload }
+            let method: UInt16 = deflated ? 8 : 0
+            archive.le32(0x04034b50); archive.le16(20); archive.le16(flags); archive.le16(method); archive.le16(0); archive.le16(0)
+            archive.le32(crc); archive.le32(UInt32(encoded.count)); archive.le32(UInt32(payload.count))
+            archive.le16(UInt16(rawName.count)); archive.le16(UInt16(extra.count)); archive.append(rawName); archive.append(extra); archive.append(encoded)
+            directory.le32(0x02014b50); directory.le16(20); directory.le16(20); directory.le16(flags); directory.le16(method); directory.le16(0); directory.le16(0)
+            directory.le32(crc); directory.le32(UInt32(encoded.count)); directory.le32(UInt32(payload.count))
+            directory.le16(UInt16(rawName.count)); directory.le16(UInt16(extra.count)); directory.le16(0); directory.le16(0); directory.le16(0)
+            directory.le32(0); directory.le32(UInt32(offset)); directory.append(rawName); directory.append(extra)
         }
         let offset = archive.count
         archive.append(directory)
@@ -25,6 +40,13 @@ enum DebugArchiveFixture {
     static func create() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-Debug-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if ProcessInfo.processInfo.arguments.contains("--fixture-legacy-encoding") {
+            let url = directory.appendingPathComponent("Legacy Encoding.zip")
+            let rawName = Data([0xb2, 0xbb, 0xb6, 0xc1, 0xce, 0xd2, 0xcb, 0xa2, 0xb3, 0xc9, 0xd7, 0xa9]) + Data(".txt".utf8)
+            let body = Data([0xd6, 0xd0, 0xce, 0xc4, 0xb2, 0xe2, 0xca, 0xd4, 10])
+            try encodedBytes([(rawName, body), (Data("Western.txt".utf8), Data([67, 97, 102, 0xe9, 10]))]).write(to: url)
+            return url
+        }
         if ProcessInfo.processInfo.arguments.contains("--fixture-rar-headers") {
             // libarchive 3.8.9 test_read_format_rar5_encrypted_filenames.rar,
             // public upstream test fixture. Password: password. Payloads: a–d.txt.

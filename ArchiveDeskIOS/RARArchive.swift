@@ -120,13 +120,16 @@ struct RARArchive: Sendable {
     }
     func requiresPassword(_ entry: ArchiveEntry) -> Bool { headersEncrypted || entry.isEncrypted }
     func previewText(_ entry: ArchiveEntry, password: String? = nil) throws -> String? {
+        try previewTextBytes(entry, password: password).flatMap { ArchiveTextPreview.decode($0) }
+    }
+    func previewTextBytes(_ entry: ArchiveEntry, password: String? = nil) throws -> Data? {
         guard !entry.isDirectory, entry.uncompressedSize <= 256 * 1024,
               ["txt", "md", "json", "xml", "csv", "log", "swift", "plist", "yaml", "yml"].contains((entry.path as NSString).pathExtension.lowercased()) else { return nil }
         if requiresPassword(entry), password == nil { throw RARFailure.passwordRequired }
         let reader = try RARReader(url: url, password: password, udf: isUDF)
         var bytes = Data()
         try reader.stream(entry, password: password) { bytes.append($0) }
-        return ArchiveTextPreview.decode(bytes)
+        return bytes
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
                  progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {

@@ -1,5 +1,6 @@
 import CoreFoundation
 import Foundation
+import CArchive
 
 /// Bounded random access: only a tail or one central/local record is in memory.
 private final class ZIPReader {
@@ -25,8 +26,9 @@ struct ZIPArchive: Sendable {
   let url: URL
   let entries: [ArchiveEntry]
   let dataBoundary: UInt64
+  var filenameEncoding: ArchiveEncoding = .auto
 
-  static func open(url: URL) throws -> ZIPArchive {
+  static func open(url: URL, filenameEncoding: ArchiveEncoding = .auto) throws -> ZIPArchive {
     let reader = try ZIPReader(url)
     guard reader.size >= 22 else {
       throw ArchiveFailure.malformed("The ZIP end record is missing.")
@@ -121,10 +123,12 @@ struct ZIPArchive: Sendable {
         }
         if local == 0xffff_ffff { local = try zip64.u64(q) }
       }
-      let cp437 = String.Encoding(
-        rawValue: CFStringConvertEncodingToNSStringEncoding(
-          CFStringEncoding(CFStringEncodings.dosLatinUS.rawValue)))
-      var name = String(data: nameData, encoding: flags & 0x800 != 0 ? .utf8 : cp437)
+      // Explicit UTF-8 and CRC-verified Unicode extras remain authoritative.
+      // Unmarked older ZIPs may contain a regional codepage rather than CP437.
+      let fallback: ArchiveEncoding = filenameEncoding == .auto
+        ? (String(data: nameData, encoding: .utf8) != nil ? .utf8 : ArchiveEncoding.guess(nameData) ?? .cp437)
+        : filenameEncoding
+      var name = (flags & 0x800 != 0 ? ArchiveEncoding.utf8 : fallback).decode(nameData)
       if flags & 0x800 == 0, let unicode = fields[0x7075], unicode.count >= 5,
         unicode[0] == 1, unicode.u32(1) == CRC32.checksum(nameData)
       {
@@ -151,7 +155,7 @@ struct ZIPArchive: Sendable {
       throw ArchiveFailure.malformed("The ZIP index length does not match its records.")
     }
     _ = try ArchiveSafety.validate(entries: entries, archiveBytes: reader.size)
-    return ZIPArchive(url: url, entries: entries, dataBoundary: directoryOffset)
+    return ZIPArchive(url: url, entries: entries, dataBoundary: directoryOffset, filenameEncoding: filenameEncoding)
   }
 
   private static func extraFields(_ extra: Data) throws -> [UInt16: Data] {
@@ -196,6 +200,68 @@ struct ZIPArchive: Sendable {
     return offset
   }
 
+  /// Raw Deflate has a fixed <=32 KiB history window. Read only the strict
+  /// parser's validated payload; never re-select by a separately decoded name.
+  /// Two 256 KiB I/O buffers are reused, independent of archive/file size.
+  private func streamDeflate(_ entry: ArchiveEntry, reader: ZIPReader, body: (Data) throws -> Void) throws {
+    var offset = try payloadOffset(entry, reader: reader)
+    var stream = z_stream()
+    let initialized = inflateInit2_(&stream, -15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+    guard initialized == Z_OK else {
+      throw ArchiveFailure.codecInitialization("ZIP Deflate", initialized, 0)
+    }
+    defer { inflateEnd(&stream) }
+    var remaining = entry.compressedSize, expanded: UInt64 = 0, crc: UInt32 = 0, ended = false
+    var output = [UInt8](repeating: 0, count: 256 * 1024)
+    while remaining > 0 && !ended {
+      try Task.checkCancellation()
+      let input = try reader.read(at: offset, count: Int(min(remaining, 256 * 1024)))
+      offset += UInt64(input.count); remaining -= UInt64(input.count)
+      try input.withUnsafeBytes { source in
+        stream.next_in = UnsafeMutablePointer(mutating: source.bindMemory(to: Bytef.self).baseAddress)
+        stream.avail_in = uInt(input.count)
+        repeat {
+          try Task.checkCancellation()
+          let before = stream.avail_in
+          let status = output.withUnsafeMutableBytes { destination in
+            stream.next_out = destination.bindMemory(to: Bytef.self).baseAddress
+            stream.avail_out = uInt(destination.count)
+            return inflate(&stream, Z_NO_FLUSH)
+          }
+          if status == Z_BUF_ERROR, stream.avail_in == 0, remaining > 0 { break }
+          guard status == Z_OK || status == Z_STREAM_END else {
+            throw ArchiveFailure.malformed("Invalid ZIP Deflate payload.")
+          }
+          let count = output.count - Int(stream.avail_out)
+          guard UInt64(count) <= entry.uncompressedSize - expanded else {
+            throw ArchiveFailure.malformed("ZIP output exceeds its declared length.")
+          }
+          if count > 0 {
+            let chunk = Data(output.prefix(count))
+            expanded += UInt64(count)
+            crc = chunk.withUnsafeBytes { CRC32.update(crc, bytes: $0) }
+            try autoreleasepool { try body(chunk) }
+          }
+          if status == Z_STREAM_END {
+            guard remaining == 0 && stream.avail_in == 0 else {
+              throw ArchiveFailure.malformed("Trailing data in ZIP Deflate payload.")
+            }
+            ended = true; break
+          }
+          guard before != stream.avail_in || count > 0 else {
+            throw ArchiveFailure.malformed("Truncated ZIP Deflate payload.")
+          }
+        } while stream.avail_in > 0 || stream.avail_out == 0
+      }
+      stream.next_in = nil; stream.next_out = nil
+    }
+    guard ended, expanded == entry.uncompressedSize else {
+      throw ArchiveFailure.malformed("The ZIP output length is incorrect.")
+    }
+    guard crc == entry.crc32 else { throw ArchiveFailure.crcMismatch(entry.path) }
+    try Task.checkCancellation()
+  }
+
   /// Use a fresh owned staging folder, then rename after all CRCs are verified.
   /// External callers must hold security scope and coordinate the destination.
   func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true,
@@ -237,7 +303,7 @@ struct ZIPArchive: Sendable {
         let handle = try FileHandle(forWritingTo: output)
         do {
           if entry.compressionMethod == 8 {
-            try NativeArchiveReader.stream(entry, from: url) {
+            try streamDeflate(entry, reader: reader) {
               try handle.write(contentsOf: $0); meter.advance($0.count)
             }
             try handle.synchronize()
@@ -282,6 +348,10 @@ struct ZIPArchive: Sendable {
   }
 
   func previewText(_ entry: ArchiveEntry) throws -> String? {
+    try previewTextBytes(entry).flatMap { ArchiveTextPreview.decode($0) }
+  }
+
+  func previewTextBytes(_ entry: ArchiveEntry) throws -> Data? {
     guard !entry.isDirectory, entry.isExtractable, entry.uncompressedSize <= 256 * 1_024 else {
       return nil
     }
@@ -293,14 +363,14 @@ struct ZIPArchive: Sendable {
     if entry.compressionMethod == 8 {
       _ = try payloadOffset(entry, reader: reader)
       var bytes = Data()
-      try NativeArchiveReader.stream(entry, from: url) { bytes.append($0) }
-      return ArchiveTextPreview.decode(bytes)
+      try streamDeflate(entry, reader: reader) { bytes.append($0) }
+      return bytes
     }
     let bytes = try reader.read(
       at: payloadOffset(entry, reader: reader), count: Int(entry.uncompressedSize))
     try Task.checkCancellation()
     guard CRC32.checksum(bytes) == entry.crc32 else { throw ArchiveFailure.crcMismatch(entry.path) }
-    return ArchiveTextPreview.decode(bytes)
+    return bytes
   }
 }
 

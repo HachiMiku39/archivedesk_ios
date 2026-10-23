@@ -4,7 +4,7 @@ The decoder is source-built FFmpeg 9.0.2 plus dav1d 1.5.4. No FFmpeg CLI,
 AVPlayer, Quick Look, ImageIO, AudioToolbox compressed codec or VideoToolbox
 decoder is used. CoreGraphics displays decoded RGBA pixels and AVAudioEngine
 renders decoded Float32 PCM; those system output APIs are not decoders.
-Text uses Swift standard-library UTF-8 and BOM-marked UTF-16 decoding.
+Text uses Swift standard-library UTF-8 and BOM-marked UTF-16 decoding. Build 10 adds strict legacy-codepage conversion through the existing open-source system iconv dependency, conservative automatic detection and an independent text encoding menu. Filename encoding and text encoding are separate; malformed BOMs and binary controls are rejected rather than silently replaced. The 256 KiB text limit and password/integrity gates remain unchanged.
 
 0.3.3 adds read-only music tags and embedded JPEG/PNG album covers using this
 same backend, with independent cover decoding and bounded metadata display.

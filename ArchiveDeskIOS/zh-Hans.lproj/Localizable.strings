@@ -154,3 +154,7 @@
 "Embedded artwork could not be previewed. Audio playback is still available." = "无法预览内嵌封面，仍可播放音频。";
 "Some music tags were shortened for preview safety." = "为控制预览资源占用，部分音乐标签已截短。";
 "Tags are read-only. Embedded JPEG/PNG artwork only; no online lookup." = "标签仅供查看。支持内嵌 JPEG／PNG 封面，不联网获取。";
+"Auto" = "自动";
+"ZIP filename encoding" = "ZIP 文件名编码";
+"Text encoding" = "正文编码";
+"Cannot decode this text safely. Try another text encoding. Binary data is not displayed." = "无法安全解码此文本，请尝试其他正文编码。不显示二进制数据。";

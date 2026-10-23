@@ -14,7 +14,7 @@ enum ArchiveContainer: Sendable {
         return entry.isEncrypted
     }
 
-    static func open(url: URL, password: String? = nil) throws -> Self {
+    static func open(url: URL, password: String? = nil, zipEncoding: ArchiveEncoding = .auto) throws -> Self {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let signature = try handle.read(upToCount: 8) ?? Data()
@@ -23,12 +23,15 @@ enum ArchiveContainer: Sendable {
         }
         // Keep the stricter existing ZIP central/local-header validation.
         if signature.starts(with: [0x50, 0x4b]) || ["zip", "zipx", "ipa", "apk", "jar", "epub"].contains(url.pathExtension.lowercased()) {
-            return .zip(try ZIPArchive.open(url: url))
+            return .zip(try ZIPArchive.open(url: url, filenameEncoding: zipEncoding))
         }
         return .native(try MultiFormatArchive.open(url: url))
     }
     func previewText(_ entry: ArchiveEntry, password: String? = nil) throws -> String? {
         switch self { case .zip(let a): try a.previewText(entry); case .native(let a): try a.previewText(entry); case .rar(let a): try a.previewText(entry, password: password) }
+    }
+    func previewTextBytes(_ entry: ArchiveEntry, password: String? = nil) throws -> Data? {
+        switch self { case .zip(let a): try a.previewTextBytes(entry); case .native(let a): try a.previewTextBytes(entry); case .rar(let a): try a.previewTextBytes(entry, password: password) }
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
                  progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {

@@ -65,7 +65,9 @@ shows that named-locale loading can fail for reasons other than insufficient
 memory. `verify-codec-locale.sh` injects missing tables, wrong codesets, ENOMEM
 and activation failure, and verifies nested restoration and errno preservation.
 
-Deflate streams use ZIP's CP437 default for names without a UTF-8 flag, matching the strict index parser rather than guessing the current locale. Explicit UTF-8 flags and Unicode extras retain the native ZIP decoder's handling. The CP437 accented-name fixture verifies actual method-8 preview/output bytes.
+Build 10 uses bounded raw zlib Deflate directly at the strict ZIP parser's validated local-header/payload offset. Native-reader filename conversion no longer selects ZIP payloads. Local/central raw names, compression method, flags, declared output length, stream end, consumed compressed length and CRC remain checked; output is committed only after successful verification. Decoder history is bounded by Deflate's 32 KiB window and I/O uses 256 KiB chunks.
+
+ZIP names honor explicit UTF-8 and CRC-verified Unicode path extras. Unflagged names first try strict UTF-8, then a conservative GB18030/CP932/Big5/CP949 script/frequency heuristic, falling back to CP437. An independent manual filename menu rebuilds the index; ambiguous short names are not guaranteed to auto-detect. Text uses strict Swift Unicode decoding and the already-linked open-source system iconv for legacy codepages, with a separate manual menu. Verified text bytes are limited to 256 KiB, kept only for the current preview, and released on navigation or memory warning. Encoding work runs off the main actor. No new bundled binary or network detector is introduced.
 
 ## Icon
 

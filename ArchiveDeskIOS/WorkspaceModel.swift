@@ -47,6 +47,9 @@ final class WorkspaceModel: ObservableObject {
     @Published var status = String(localized: "Ready")
     @Published var errorMessage: String?
     @Published var previewText: String?
+    @Published private(set) var textEncoding: ArchiveEncoding = .auto
+    @Published private(set) var hasTextPreviewBytes = false
+    private var textPreviewBytes: Data?
     @Published var extractionSelection: Set<String> = []
     @Published var exportedURL: URL?
     @Published var exportedEntryPath: String?
@@ -137,7 +140,7 @@ final class WorkspaceModel: ObservableObject {
         cachedRows = []; cachedFolder = nil
         previewOperation?.cancel()
         mediaPreview.reset()
-        if previewText != nil { previewText = nil }
+        clearTextPreview()
         if isBusy && !stoppedForMemory { stoppedForMemory = true; operation?.cancel() }
     }
 
@@ -174,7 +177,7 @@ final class WorkspaceModel: ObservableObject {
         if finished { progressMailbox = nil }
     }
 
-    func importArchive(_ url: URL, alreadyPrivate: Bool = false, password: String? = nil) {
+    func importArchive(_ url: URL, alreadyPrivate: Bool = false, password: String? = nil, zipEncoding: ArchiveEncoding = .auto) {
         guard !isBusy else { return }
         let priorPreview = prepareOperation()
         isBusy = true; status = String(localized: "Preparing file…")
@@ -184,7 +187,7 @@ final class WorkspaceModel: ObservableObject {
             let worker = Task.detached(priority: .userInitiated) {
                 let snapshot = alreadyPrivate ? url : try CoordinatedFileAccess.snapshot(of: url, progress: { mailbox.update($0, $1) })
                 do {
-                    let opened = try ArchiveContainer.open(url: snapshot, password: password)
+                    let opened = try ArchiveContainer.open(url: snapshot, password: password, zipEncoding: zipEncoding)
                     try Task.checkCancellation()
                     return ArchiveImportResult.opened(opened)
                 }
@@ -199,7 +202,7 @@ final class WorkspaceModel: ObservableObject {
                 let snapshot: URL
                 switch result { case .opened(let opened): snapshot = opened.url; case .passwordRequired(let url): snapshot = url }
                 if Task.isCancelled {
-                    try? FileManager.default.removeItem(at: snapshot.deletingLastPathComponent())
+                    if archive?.url != snapshot { try? FileManager.default.removeItem(at: snapshot.deletingLastPathComponent()) }
                     throw CancellationError()
                 }
                 guard case .opened(let opened) = result else {
@@ -207,6 +210,7 @@ final class WorkspaceModel: ObservableObject {
                     requestPassword(.open(snapshot)); isBusy = false; return
                 }
                 previewOperation?.cancel()
+                clearTextPreview()
                 let previous = archive?.url
                 archive = opened; navigation = ArchiveNavigation(); previewText = nil; exportedURL = nil
                 extractionSelection = []
@@ -232,7 +236,7 @@ final class WorkspaceModel: ObservableObject {
         navigation.selection = path
         compactColumn = path == nil ? .sidebar : .detail
         let priorPreview = previewOperation
-        previewOperation?.cancel(); previewText = nil
+        previewOperation?.cancel(); clearTextPreview()
         let generation = mediaPreview.reset()
         guard !isBusy, MemoryPolicy.allowsNewWork(headroom: MemoryPolicy.headroom()),
               let archive, let entry = selectedEntry else { return }
@@ -256,8 +260,11 @@ final class WorkspaceModel: ObservableObject {
             await priorPreview?.value
             guard !Task.isCancelled else { return }
             let media = mediaPreview
-            let worker = Task.detached { () async throws -> String? in
-                if kind == .text { return try archive.previewText(entry, password: password) }
+            let worker = Task.detached { () async throws -> (Data?, String?) in
+                if kind == .text {
+                    let bytes = try archive.previewTextBytes(entry, password: password)
+                    return (bytes, bytes.flatMap { ArchiveTextPreview.decode($0) })
+                }
                 guard entry.uncompressedSize <= 512 * 1024 * 1024,
                       kind != .image || entry.uncompressedSize <= 32 * 1024 * 1024 else { throw MediaPreviewFailure.limit }
                 let root = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-Media-\(UUID())", isDirectory: true)
@@ -268,12 +275,15 @@ final class WorkspaceModel: ObservableObject {
                 let output = try archive.extract(paths: [entry.path], outputRoot: root, password: password)
                 let file = output.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
                 try await MediaPreviewWorker.run(url: file, kind: kind, model: media, generation: generation)
-                return nil
+                return (nil, nil)
             }
             do {
-                let text = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                let (bytes, text) = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
                 try Task.checkCancellation()
-                if navigation.selection == path { previewText = text }
+                if navigation.selection == path {
+                    textPreviewBytes = bytes; hasTextPreviewBytes = bytes != nil
+                    previewText = text
+                }
             } catch is CancellationError { }
             catch {
                 guard !Task.isCancelled else { return }
@@ -286,8 +296,34 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    func enterFolder(_ path: String) { previewOperation?.cancel(); previewText = nil; mediaPreview.reset(); navigation.enter(path); compactColumn = .sidebar }
-    func goUp() { previewOperation?.cancel(); previewText = nil; mediaPreview.reset(); navigation.goUp(); compactColumn = .sidebar }
+    private func clearTextPreview() {
+        previewText = nil; textPreviewBytes = nil; hasTextPreviewBytes = false; textEncoding = .auto
+    }
+    func changeTextEncoding(_ encoding: ArchiveEncoding) {
+        guard !isBusy, let bytes = textPreviewBytes else { return }
+        textEncoding = encoding
+        let path = navigation.selection
+        let previous = previewOperation
+        previous?.cancel()
+        previewOperation = Task {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            let worker = Task.detached { ArchiveTextPreview.decode(bytes, encoding: encoding) }
+            let text = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            guard !Task.isCancelled, navigation.selection == path else { return }
+            previewText = text
+        }
+    }
+    var zipFilenameEncoding: ArchiveEncoding? {
+        if case .zip(let zip) = archive { return zip.filenameEncoding }
+        return nil
+    }
+    func changeZIPEncoding(_ encoding: ArchiveEncoding) {
+        guard !isBusy, let archive, zipFilenameEncoding != nil else { return }
+        importArchive(archive.url, alreadyPrivate: true, zipEncoding: encoding)
+    }
+    func enterFolder(_ path: String) { previewOperation?.cancel(); clearTextPreview(); mediaPreview.reset(); navigation.enter(path); compactColumn = .sidebar }
+    func goUp() { previewOperation?.cancel(); clearTextPreview(); mediaPreview.reset(); navigation.goUp(); compactColumn = .sidebar }
 
     func extractSelected(to pickedFolder: URL? = nil, password: String? = nil) {
         guard !isBusy, let entry = selectedEntry, entry.isExtractable else { return }
@@ -355,7 +391,7 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    func cancel() { operation?.cancel(); previewOperation?.cancel(); mediaPreview.reset(); cancelPassword() }
+    func cancel() { operation?.cancel(); previewOperation?.cancel(); clearTextPreview(); mediaPreview.reset(); cancelPassword() }
 
     private func requestPassword(_ action: PasswordAction, error: String? = nil) {
         passwordAction = action; passwordError = error; isPasswordPresented = true
