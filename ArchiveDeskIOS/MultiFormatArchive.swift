@@ -229,9 +229,9 @@ struct MultiFormatArchive: Sendable {
         return data
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true,
-                 progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
+                 progress: @escaping ArchiveProgress = { _, _ in }, direct: DirectExtractionOutput? = nil) throws -> URL {
         if let udfBackend {
-            return try udfBackend.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress)
+            return try udfBackend.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress, direct: direct)
         }
         let selected = entries.filter { paths == nil || paths!.contains($0.path) }
         guard !selected.isEmpty, selected.allSatisfy(\.isExtractable) else {
@@ -244,11 +244,15 @@ struct MultiFormatArchive: Sendable {
         let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { throw DestinationFailure.invalidDirectory }
         try StorageBudget.require(total + 16 * 1024 * 1024, at: outputRoot)
-        let staging = outputRoot.appendingPathComponent(".ArchiveDesk-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        let staging = direct?.directory ?? outputRoot.appendingPathComponent(".ArchiveDesk-\(UUID().uuidString)", isDirectory: true)
+        if direct == nil { try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false) }
         do {
             for entry in selected {
                 try Task.checkCancellation()
+                if let direct {
+                    if !direct.shouldWrite(entry) { meter.advance(Int(clamping: entry.uncompressedSize)); continue }
+                    try direct.prepare(entry)
+                }
                 let output = staging.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
                 if entry.isDirectory {
                     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -265,11 +269,13 @@ struct MultiFormatArchive: Sendable {
                 } catch { try? handle.close(); throw error }
             }
             try Task.checkCancellation()
+            if direct != nil { meter.complete(); return outputRoot }
             let final = outputRoot.appendingPathComponent("Extracted-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.moveItem(at: staging, to: final)
             meter.complete()
             return final
         } catch {
+            if direct != nil { throw error }
             let original = error
             do { try FileManager.default.removeItem(at: staging) }
             catch { throw ExtractionRollbackFailure(stagingFolder: staging.lastPathComponent, cause: original.localizedDescription) }

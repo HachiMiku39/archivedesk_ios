@@ -98,6 +98,48 @@ enum CoreVerification {
         check(try Data(contentsOf: output.appendingPathComponent("Folder/Readme.txt")) == text, "Preserved filename case")
         check(FileManager.default.fileExists(atPath: output.appendingPathComponent("empty.bin").path), "Zero byte output")
 
+        let container = ArchiveContainer.zip(archive)
+        for staged in [false, true] {
+            for mode in ["mixed", "all", "cancel"] {
+                FileHandle.standardError.write(Data("CONFLICT CASE staged=\(staged) mode=\(mode)\n".utf8))
+                let destination = root.appendingPathComponent("conflicts-\(staged)-\(mode)")
+                try FileManager.default.createDirectory(at: destination.appendingPathComponent("Folder"), withIntermediateDirectories: true)
+                let old = Data("original file".utf8)
+                for name in ["Folder/Readme.txt", "Folder/日本語.txt"] { try old.write(to: destination.appendingPathComponent(name)) }
+                var prompts = 0
+                do {
+                    let receipt = try container.extractForUser(outputRoot: destination, createOutputRoot: false, mergeExisting: true, useStaging: staged, conflict: { path in
+                        prompts += 1
+                        if mode == "cancel" { return .cancel }
+                        if mode == "all" { return .replaceAll }
+                        return path == "Folder/Readme.txt" ? .replace : .skip
+                    })
+                    check(mode != "cancel" && receipt == destination, "Merged extraction returns selected directory")
+                    check(prompts == (mode == "all" ? 1 : 2), "Replace all applies to the current task only")
+                } catch is CancellationError { check(mode == "cancel", "Conflict cancellation") }
+                check(try Data(contentsOf: destination.appendingPathComponent("Folder/Readme.txt")) == (mode == "cancel" ? old : text), "Replace or cancel preserves correct content")
+                check(try Data(contentsOf: destination.appendingPathComponent("Folder/日本語.txt")) == (mode == "all" ? Data("日本語".utf8) : old), "Skip preserves user content")
+                let files = try FileManager.default.contentsOfDirectory(at: destination.appendingPathComponent("Folder"), includingPropertiesForKeys: nil)
+                let backups = files.filter { $0.lastPathComponent.hasPrefix("ArchiveDesk-backup-") }
+                check(backups.count == (mode == "cancel" ? 0 : mode == "all" ? 2 : 1), "Original backups retained")
+                for backup in backups { check(try Data(contentsOf: backup) == old, "Backup bytes match original") }
+                check(try !FileManager.default.contentsOfDirectory(atPath: destination.path).contains { $0.hasPrefix(".ArchiveDesk-") || $0.hasPrefix("Extracted-") }, "No completed staging or random folder in merge mode")
+                check(mode != "cancel" || !FileManager.default.fileExists(atPath: destination.appendingPathComponent("empty.bin").path), "Cancel decisions precede output writes")
+            }
+            let random = try container.extractForUser(outputRoot: root, mergeExisting: false, useStaging: staged, conflict: { _ in fatalError("Unexpected new-folder conflict") })
+            check(random != root && random.lastPathComponent.hasPrefix("Extracted-"), "Random folder remains optional")
+            check(try Data(contentsOf: random.appendingPathComponent("Folder/Readme.txt")) == text, "Optional random folder bytes")
+        }
+        let protected = root.appendingPathComponent("direct-symlink")
+        let outside = root.appendingPathComponent("outside-merge")
+        try FileManager.default.createDirectory(at: protected, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: protected.appendingPathComponent("Folder"), withDestinationURL: outside)
+        rejects("Direct extraction refuses existing symlink parent") {
+            _ = try container.extractForUser(outputRoot: protected, mergeExisting: true, conflict: { _ in .replaceAll })
+        }
+        check(try FileManager.default.contentsOfDirectory(atPath: outside.path).isEmpty, "No symlink write outside destination")
+
         check(try DestinationPolicy.classify(inAppDocuments: true, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: true) == .appDocuments, "App Documents writable")
         check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: true, volumeIsLocal: true, volumeIsInternal: true) == .iCloud, "System iCloud writable")
         check(try DestinationPolicy.classify(inAppDocuments: false, isUbiquitous: false, volumeIsLocal: true, volumeIsInternal: false) == .externalVolume, "External local volume writable")
@@ -183,6 +225,18 @@ enum CoreVerification {
         let damaged = try open(badCRC)
         rejects("CRC corruption") { _ = try damaged.extract(outputRoot: temporary.appendingPathComponent("corruption")) }
         check(try FileManager.default.contentsOfDirectory(atPath: temporary.appendingPathComponent("corruption").path).isEmpty, "Failure cleans staging")
+        let directFailure = temporary.appendingPathComponent("direct-corruption")
+        try FileManager.default.createDirectory(at: directFailure, withIntermediateDirectories: false)
+        try text.write(to: directFailure.appendingPathComponent("bad.txt"))
+        try text.write(to: directFailure.appendingPathComponent("keep.txt"))
+        rejects("Direct CRC failure retains destination and original backup") {
+            _ = try ArchiveContainer.zip(damaged).extractForUser(outputRoot: directFailure, mergeExisting: true, conflict: { _ in .replace })
+        }
+        check(FileManager.default.fileExists(atPath: directFailure.path), "Direct failure never deletes chosen folder")
+        check(try Data(contentsOf: directFailure.appendingPathComponent("keep.txt")) == text, "Direct failure preserves unrelated files")
+        let failureBackups = try FileManager.default.contentsOfDirectory(at: directFailure, includingPropertiesForKeys: nil).filter { $0.lastPathComponent.hasPrefix("ArchiveDesk-backup-") }
+        let originalBackup = try failureBackups.first.map { try Data(contentsOf: $0) }
+        check(failureBackups.count == 1 && originalBackup == text, "Original bytes survive failed replacement")
 
         var link = DebugArchiveFixture.bytes([("link.txt", text)])
         let central = 30 + "link.txt".utf8.count + text.count

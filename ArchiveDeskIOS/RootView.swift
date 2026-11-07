@@ -13,6 +13,9 @@ struct RootView: View {
     @StateObject private var model = WorkspaceModel()
     @State private var isDestinationChoicePresented = false
     @State private var isDestinationPickerPresented = false
+    @State private var openPickerAfterDismissal = false
+    @State private var hasPendingExtraction = false
+    @State private var pendingExtractionFolder: URL?
     @State private var extractionScope = ArchiveExtractionScope.all
     @State private var isSelectingEntries = false
     @Environment(\.scenePhase) private var scenePhase
@@ -30,19 +33,26 @@ struct RootView: View {
                 case .failure(let error): model.errorMessage = error.localizedDescription
                 }
             }
-            .confirmationDialog("Extraction destination", isPresented: $isDestinationChoicePresented, titleVisibility: .visible) {
-                Button("ArchiveDesk on this device") { Task { @MainActor in model.extract(scope: extractionScope) } }
-                Button("Choose folder in Files…") { Task { @MainActor in isDestinationPickerPresented = true } }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced.")
+            .sheet(isPresented: $isDestinationChoicePresented, onDismiss: {
+                if openPickerAfterDismissal { openPickerAfterDismissal = false; isDestinationPickerPresented = true }
+                else { performPendingExtraction() }
+            }) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Extraction destination").font(.title2)
+                    Text(model.mergeExtractedFiles ? "Extract into the destination folder. You decide whether to replace existing files; originals are kept as backups." : "Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced.").font(.caption)
+                    Button("ArchiveDesk on this device") {
+                        pendingExtractionFolder = nil; hasPendingExtraction = true; isDestinationChoicePresented = false
+                    }
+                    Button("Choose folder in Files…") { openPickerAfterDismissal = true; isDestinationChoicePresented = false }
+                    Button("Cancel", role: .cancel) { isDestinationChoicePresented = false }
+                }.buttonStyle(.bordered).padding(24).presentationDetents([.medium, .large])
             }
-            .sheet(isPresented: $isDestinationPickerPresented) {
+            .sheet(isPresented: $isDestinationPickerPresented, onDismiss: { performPendingExtraction() }) {
                 // Keep the system controller intact: its adaptive bars handle
                 // Duo's camera, hinge and provider-specific folder actions.
                 DestinationFolderPicker { folder in
+                    pendingExtractionFolder = folder; hasPendingExtraction = true
                     isDestinationPickerPresented = false
-                    Task { @MainActor in model.extract(scope: extractionScope, to: folder) }
                 } onCancel: { isDestinationPickerPresented = false }
                 .safeAreaInset(edge: .bottom) {
                     // Some compact folder-picker presentations omit a native
@@ -58,6 +68,23 @@ struct RootView: View {
             .alert("ArchiveDesk", isPresented: Binding(get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } })) {
                 Button("OK", role: .cancel) { model.errorMessage = nil }
             } message: { Text(model.errorMessage ?? "") }
+            .sheet(item: $model.extractionConflict, onDismiss: { model.finishConflictDismissal() }) { prompt in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("File already exists").font(.title2)
+                        Text(verbatim: prompt.path).textSelection(.enabled)
+                        Text("Replaced originals are kept as backups beside the output files.").font(.caption).foregroundStyle(.secondary)
+                        Button("Replace this file", role: .destructive) { model.resolveExtractionConflict(.replace) }
+                            .accessibilityIdentifier("conflictReplace")
+                        Button("Replace all", role: .destructive) { model.resolveExtractionConflict(.replaceAll) }
+                            .accessibilityIdentifier("conflictReplaceAll")
+                        Button("Do not replace") { model.resolveExtractionConflict(.skip) }
+                            .accessibilityIdentifier("conflictSkip")
+                        Button("Cancel task", role: .cancel) { model.resolveExtractionConflict(.cancel) }
+                    }.buttonStyle(.bordered).padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .contain).accessibilityIdentifier("extractionConflictSheet")
+                }.presentationDetents([.medium, .large]).interactiveDismissDisabled()
+            }
             .sheet(isPresented: $model.isPasswordPresented, onDismiss: {
                 if model.isPasswordPresented == false { model.cancelPassword() }
             }) { ArchivePasswordView(model: model) }
@@ -75,6 +102,13 @@ struct RootView: View {
                 model.loadDebugArchiveIfRequested()
                 #endif
             }
+    }
+
+    private func performPendingExtraction() {
+        guard hasPendingExtraction else { return }
+        hasPendingExtraction = false
+        model.extract(scope: extractionScope, to: pendingExtractionFolder)
+        pendingExtractionFolder = nil
     }
 
     private var tabs: some View {
@@ -105,6 +139,10 @@ struct RootView: View {
                 if model.archive != nil {
                     List(selection: Binding(get: { model.navigation.selection }, set: { model.select($0) })) {
                         Section {
+                            if !model.useExtractionStaging {
+                                Text("Direct extraction may leave incomplete files. Replaced originals remain as backups.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             if let encoding = model.zipFilenameEncoding {
                                 Menu {
                                     ForEach(ArchiveEncoding.filenameOptions) { option in
@@ -432,6 +470,19 @@ struct InformationView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     var body: some View {
         List {
+            Section {
+                NavigationLink("Settings") {
+                    Form {
+                        Section("Extraction settings") {
+                            Toggle("Create a new subfolder (random name)", isOn: Binding(get: { !model.mergeExtractedFiles }, set: { model.mergeExtractedFiles = !$0 }))
+                                .accessibilityIdentifier("randomExtractionFolder")
+                            Toggle("Use extraction staging", isOn: $model.useExtractionStaging)
+                                .accessibilityIdentifier("useExtractionStaging")
+                            Text("Both options are off by default. Direct extraction asks before replacing files; replaced originals are kept as backups.")
+                        }
+                    }.navigationTitle("Settings").disabled(model.isBusy)
+                }.accessibilityIdentifier("settingsLink")
+            }
             Section("Formats") {
                 LabeledContent("ZIP browsing", value: String(localized: "Available"))
                 LabeledContent("ZIP stored / Deflate", value: String(localized: "Available"))
@@ -444,7 +495,7 @@ struct InformationView: View {
             }
             Section("Storage access") {
                 Text("Read archives from any provider available in Files, including external storage.")
-                Text("Write to any writable folder authorized in Files, including local storage, USB drives and cloud providers. A new folder is created; existing files are never replaced.")
+                Text("Extract into the destination folder. You decide whether to replace existing files; originals are kept as backups.")
                 Text("If access is revoked or a drive is disconnected, choose the folder again. A cloud provider may finish uploading after the local write completes.")
             }
             #if DEBUG

@@ -1,4 +1,175 @@
 import Foundation
+import Darwin
+
+enum ExtractionConflictChoice: Sendable { case replace, replaceAll, skip, cancel }
+
+/// A background file operation waits here; the main actor remains free to show
+/// the decision sheet. Cancellation is checked even when no button is pressed.
+final class ExtractionConflictPrompt: Identifiable, @unchecked Sendable {
+  let id = UUID()
+  let path: String
+  private let condition = NSCondition()
+  private var choice: ExtractionConflictChoice?
+  init(path: String) { self.path = path }
+  func resolve(_ answer: ExtractionConflictChoice) {
+    condition.lock(); defer { condition.unlock() }
+    if choice == nil { choice = answer; condition.broadcast() }
+  }
+  func wait() throws -> ExtractionConflictChoice {
+    condition.lock(); defer { condition.unlock() }
+    while choice == nil {
+      try Task.checkCancellation()
+      _ = condition.wait(until: Date(timeIntervalSinceNow: 0.2))
+    }
+    try Task.checkCancellation()
+    return choice!
+  }
+}
+
+enum ExtractionPublication {
+  static func checkDirectory(_ url: URL) throws {
+    var path = ""
+    for part in url.path.split(separator: "/") {
+      guard part != ".", part != ".." else { throw DestinationFailure.invalidDirectory }
+      path += "/" + part
+      if path == "/var" || path == "/tmp" { path = "/private" + path }
+      var info = stat()
+      guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { throw DestinationFailure.invalidDirectory }
+    }
+  }
+  static func inspect(_ url: URL) throws -> stat? {
+    var info = stat()
+    if lstat(url.path, &info) == 0 { return info }
+    guard errno == ENOENT else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    return nil
+  }
+  /// Merge only decoded, verified output. All conflict decisions precede writes.
+  /// Originals are moved beside their replacement, never deleted or recopied.
+  static func merge(_ source: URL, into destination: URL,
+                    conflict: (String) throws -> ExtractionConflictChoice) throws {
+    try checkDirectory(source); try checkDirectory(destination)
+    let fm = FileManager.default
+    guard let walk = fm.enumerator(at: source, includingPropertiesForKeys: nil) else { throw DestinationFailure.invalidDirectory }
+    var files: [URL] = []
+    for case let file as URL in walk { try Task.checkCancellation(); files.append(file) }
+    files.sort { $0.path < $1.path }
+    var plan: [(file: URL, target: URL, old: stat?)] = []
+    var replaceAll = false
+    let sourcePath = source.resolvingSymlinksInPath().standardizedFileURL.path
+    for file in files {
+      try Task.checkCancellation()
+      let fullPath = file.resolvingSymlinksInPath().standardizedFileURL.path
+      guard fullPath.hasPrefix(sourcePath + "/") else { throw ArchiveFailure.unsafePath(file.lastPathComponent) }
+      let relative = String(fullPath.dropFirst(sourcePath.count + 1))
+      let target = destination.appendingPathComponent(try ArchiveSafety.outputPath(relative))
+      guard let incoming = try inspect(file), (incoming.st_mode & S_IFMT) == S_IFDIR ||
+              ((incoming.st_mode & S_IFMT) == S_IFREG && incoming.st_nlink == 1) else { throw ArchiveFailure.unsafePath(relative) }
+      var parent = target.deletingLastPathComponent()
+      while parent.path.count >= destination.path.count {
+        if try inspect(parent) != nil { try checkDirectory(parent); break }
+        parent.deleteLastPathComponent()
+      }
+      let old = try inspect(target)
+      if let old {
+        guard (old.st_mode & S_IFMT) == (incoming.st_mode & S_IFMT),
+              (old.st_mode & S_IFMT) == S_IFDIR || old.st_nlink == 1 else { throw ArchiveFailure.unsafePath(relative) }
+        if (incoming.st_mode & S_IFMT) == S_IFREG {
+          let answer = replaceAll ? ExtractionConflictChoice.replace : try conflict(relative)
+          try Task.checkCancellation()
+          switch answer {
+          case .skip: continue
+          case .cancel: throw CancellationError()
+          case .replaceAll: replaceAll = true
+          case .replace: break
+          }
+        }
+      }
+      plan.append((file, target, old))
+    }
+    try Task.checkCancellation()
+    for item in plan {
+      try Task.checkCancellation()
+      try checkDirectory(item.target.deletingLastPathComponent())
+      let incoming = try fm.attributesOfItem(atPath: item.file.path)
+      if incoming[.type] as? FileAttributeType == .typeDirectory {
+        if item.old == nil { try fm.createDirectory(at: item.target, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        else { try checkDirectory(item.target) }
+        continue
+      }
+      var backup: URL?
+      if let old = item.old {
+        guard let current = try inspect(item.target), current.st_dev == old.st_dev, current.st_ino == old.st_ino,
+              (current.st_mode & S_IFMT) == S_IFREG, current.st_nlink == 1, current.st_size == old.st_size,
+              current.st_mtimespec.tv_sec == old.st_mtimespec.tv_sec,
+              current.st_mtimespec.tv_nsec == old.st_mtimespec.tv_nsec else { throw DestinationFailure.changed }
+        let saved = item.target.deletingLastPathComponent().appendingPathComponent("ArchiveDesk-backup-" + UUID().uuidString)
+        try fm.moveItem(at: item.target, to: saved); backup = saved
+      }
+      do { try fm.moveItem(at: item.file, to: item.target) }
+      catch {
+        if let backup, try inspect(item.target) == nil { try? fm.moveItem(at: backup, to: item.target) }
+        throw error
+      }
+    }
+  }
+}
+
+/// Direct output owns no staging folder. It never deletes the chosen root on
+/// failure. Resolve every existing-file decision before starting the decoder.
+final class DirectExtractionOutput {
+  let directory: URL
+  private var skipped = Set<String>()
+  private var replacements: [String: stat] = [:]
+  init(entries: [ArchiveEntry], directory: URL,
+       conflict: (String) throws -> ExtractionConflictChoice) throws {
+    self.directory = directory
+    try ExtractionPublication.checkDirectory(directory)
+    _ = try ArchiveSafety.validate(entries: entries, archiveBytes: 0)
+    var replaceAll = false
+    for entry in entries {
+      try Task.checkCancellation()
+      let target = directory.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
+      try checkParent(target)
+      if let old = try ExtractionPublication.inspect(target) {
+        guard (old.st_mode & S_IFMT) == (entry.isDirectory ? S_IFDIR : S_IFREG),
+              entry.isDirectory || old.st_nlink == 1 else { throw ArchiveFailure.unsafePath(entry.path) }
+        if !entry.isDirectory {
+          let choice = replaceAll ? ExtractionConflictChoice.replace : try conflict(entry.path)
+          try Task.checkCancellation()
+          switch choice {
+          case .skip: skipped.insert(entry.path)
+          case .cancel: throw CancellationError()
+          case .replaceAll: replaceAll = true; replacements[entry.path] = old
+          case .replace: replacements[entry.path] = old
+          }
+        }
+      }
+    }
+  }
+  private func checkParent(_ target: URL) throws {
+    var parent = target.deletingLastPathComponent()
+    while parent.path.count >= directory.path.count {
+      if try ExtractionPublication.inspect(parent) != nil { try ExtractionPublication.checkDirectory(parent); return }
+      parent.deleteLastPathComponent()
+    }
+    throw DestinationFailure.invalidDirectory
+  }
+  func shouldWrite(_ entry: ArchiveEntry) -> Bool { !skipped.contains(entry.path) }
+  func prepare(_ entry: ArchiveEntry) throws {
+    try Task.checkCancellation()
+    let target = directory.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
+    try checkParent(target)
+    if let old = replacements[entry.path] {
+      guard let current = try ExtractionPublication.inspect(target), current.st_dev == old.st_dev, current.st_ino == old.st_ino,
+            (current.st_mode & S_IFMT) == S_IFREG, current.st_nlink == 1, current.st_size == old.st_size,
+            current.st_mtimespec.tv_sec == old.st_mtimespec.tv_sec,
+            current.st_mtimespec.tv_nsec == old.st_mtimespec.tv_nsec else { throw DestinationFailure.changed }
+      let backup = target.deletingLastPathComponent().appendingPathComponent("ArchiveDesk-backup-" + UUID().uuidString)
+      try FileManager.default.moveItem(at: target, to: backup)
+      replacements.removeValue(forKey: entry.path)
+    }
+  }
+}
 
 enum DestinationKind: Equatable, Sendable {
   case appDocuments, iCloud, externalVolume, authorizedDirectory
@@ -41,13 +212,15 @@ enum DestinationPolicy {
 }
 
 enum DestinationFailure: LocalizedError {
-  case invalidDirectory, readOnly
+  case invalidDirectory, readOnly, changed
   var errorDescription: String? {
     switch self {
     case .invalidDirectory:
       String(localized: "Choose an existing folder, not a file or symbolic link.")
     case .readOnly:
       String(localized: "This folder is read-only. Choose a writable destination in Files.")
+    case .changed:
+      String(localized: "The destination changed while awaiting a conflict decision. Please try again.")
     }
   }
 }
@@ -67,7 +240,8 @@ extension CoordinatedFileAccess {
   }
 
   static func extract(_ archive: ArchiveContainer, paths: Set<String>, to pickedFolder: URL, password: String? = nil,
-                      progress: @escaping ArchiveProgress = { _, _ in }) throws
+                      progress: @escaping ArchiveProgress = { _, _ in }, mergeExisting: Bool = false, useStaging: Bool = false,
+                      conflict: (String) throws -> ExtractionConflictChoice = { _ in .skip }) throws
     -> ExtractionResult
   {
     let scoped = pickedFolder.startAccessingSecurityScopedResource()
@@ -83,8 +257,9 @@ extension CoordinatedFileAccess {
       result = Result {
         try Task.checkCancellation()
         let kind = try DestinationPolicy.validate(folder)
-        let directory = try archive.extract(
-          paths: paths, outputRoot: folder, createOutputRoot: false, password: password, progress: progress)
+        let directory = try archive.extractForUser(
+          paths: paths, outputRoot: folder, createOutputRoot: false, password: password, progress: progress,
+          mergeExisting: mergeExisting, useStaging: useStaging, conflict: conflict)
         return ExtractionResult(directory: directory, destination: kind)
       }
     }

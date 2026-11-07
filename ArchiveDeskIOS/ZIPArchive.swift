@@ -265,7 +265,7 @@ struct ZIPArchive: Sendable {
   /// Use a fresh owned staging folder, then rename after all CRCs are verified.
   /// External callers must hold security scope and coordinate the destination.
   func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true,
-               progress: @escaping ArchiveProgress = { _, _ in }) throws
+               progress: @escaping ArchiveProgress = { _, _ in }, direct: DirectExtractionOutput? = nil) throws
     -> URL
   {
     let selected = entries.filter { paths == nil || paths!.contains($0.path) }
@@ -284,13 +284,17 @@ struct ZIPArchive: Sendable {
       throw DestinationFailure.invalidDirectory
     }
     try StorageBudget.require(total + 16 * 1_024 * 1_024, at: outputRoot)
-    let staging = outputRoot.appendingPathComponent(
+    let staging = direct?.directory ?? outputRoot.appendingPathComponent(
       ".ArchiveDesk-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+    if direct == nil { try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false) }
     do {
       let reader = try ZIPReader(url)
       for entry in selected {
         try Task.checkCancellation()
+        if let direct {
+          if !direct.shouldWrite(entry) { meter.advance(Int(clamping: entry.uncompressedSize)); continue }
+          try direct.prepare(entry)
+        }
         let output = staging.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
         if entry.isDirectory {
           try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -330,12 +334,14 @@ struct ZIPArchive: Sendable {
         }
       }
       try Task.checkCancellation()
+      if direct != nil { meter.complete(); return outputRoot }
       let final = outputRoot.appendingPathComponent(
         "Extracted-\(UUID().uuidString)", isDirectory: true)
       try FileManager.default.moveItem(at: staging, to: final)
       meter.complete()
       return final
     } catch {
+      if direct != nil { throw error }
       let originalError = error
       do { try FileManager.default.removeItem(at: staging) } catch {
         // A disconnected/read-only drive can prevent rollback. Never claim

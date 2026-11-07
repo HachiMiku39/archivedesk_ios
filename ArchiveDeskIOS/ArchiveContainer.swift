@@ -34,11 +34,38 @@ enum ArchiveContainer: Sendable {
         switch self { case .zip(let a): try a.previewTextBytes(entry); case .native(let a): try a.previewTextBytes(entry); case .rar(let a): try a.previewTextBytes(entry, password: password) }
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
-                 progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
+                 progress: @escaping ArchiveProgress = { _, _ in }, direct: DirectExtractionOutput? = nil) throws -> URL {
         switch self {
-        case .zip(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress)
-        case .native(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress)
-        case .rar(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, password: password, progress: progress)
+        case .zip(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress, direct: direct)
+        case .native(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, progress: progress, direct: direct)
+        case .rar(let a): try a.extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, password: password, progress: progress, direct: direct)
+        }
+    }
+    func extractForUser(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
+                        progress: @escaping ArchiveProgress = { _, _ in }, mergeExisting: Bool, useStaging: Bool = false,
+                        conflict: (String) throws -> ExtractionConflictChoice) throws -> URL {
+        if !useStaging {
+            if createOutputRoot { try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true) }
+            try ExtractionPublication.checkDirectory(outputRoot)
+            let destination = mergeExisting ? outputRoot : outputRoot.appendingPathComponent("Extracted-" + UUID().uuidString, isDirectory: true)
+            if !mergeExisting { try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false) }
+            let selected = entries.filter { paths == nil || paths!.contains($0.path) }
+            let direct = try DirectExtractionOutput(entries: selected, directory: destination, conflict: conflict)
+            return try extract(paths: paths, outputRoot: destination, createOutputRoot: false, password: password, progress: progress, direct: direct)
+        }
+        let decoded = try extract(paths: paths, outputRoot: outputRoot, createOutputRoot: createOutputRoot, password: password, progress: progress)
+        guard mergeExisting else { return decoded }
+        do {
+            try ExtractionPublication.merge(decoded, into: outputRoot, conflict: conflict)
+            try FileManager.default.removeItem(at: decoded)
+            return outputRoot
+        } catch {
+            let original = error
+            if FileManager.default.fileExists(atPath: decoded.path) {
+                do { try FileManager.default.removeItem(at: decoded) }
+                catch { throw ExtractionRollbackFailure(stagingFolder: decoded.lastPathComponent, cause: original.localizedDescription) }
+            }
+            throw original
         }
     }
 }

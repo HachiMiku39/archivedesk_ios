@@ -40,6 +40,12 @@ enum DebugArchiveFixture {
     static func create() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("ArchiveDesk-Debug-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if ProcessInfo.processInfo.arguments.contains("--fixture-conflicts") {
+            let folder = "Conflict-" + UUID().uuidString
+            let url = directory.appendingPathComponent("Conflicts.zip")
+            try bytes([(folder + "/a.txt", Data("first".utf8)), (folder + "/b.txt", Data("second".utf8))]).write(to: url)
+            return url
+        }
         if ProcessInfo.processInfo.arguments.contains("--fixture-legacy-encoding") {
             let url = directory.appendingPathComponent("Legacy Encoding.zip")
             let rawName = Data([0xb2, 0xbb, 0xb6, 0xc1, 0xce, 0xd2, 0xcb, 0xa2, 0xb3, 0xc9, 0xd7, 0xa9]) + Data(".txt".utf8)

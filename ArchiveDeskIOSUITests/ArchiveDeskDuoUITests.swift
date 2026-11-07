@@ -2,6 +2,55 @@ import XCTest
 
 final class ArchiveDeskDuoUITests: XCTestCase {
     @MainActor
+    func testDirectConflictChoicesAndSettingsDefaults() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--demo-archive", "--fixture-conflicts", "-randomExtractionFolder", "NO", "-useExtractionStaging", "NO", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let extract = app.buttons["extractFolderOrAll"].firstMatch
+        XCTAssertTrue(extract.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.switches["randomExtractionFolder"].exists)
+        XCTAssertFalse(app.switches["useExtractionStaging"].exists)
+        func startExtraction() {
+            extract.tap()
+            let local = app.buttons["ArchiveDesk on this device"].firstMatch
+            XCTAssertTrue(local.waitForExistence(timeout: 5)); local.tap()
+        }
+        startExtraction()
+        let receipt = app.staticTexts["folderExtractionReceipt"].firstMatch
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        startExtraction()
+        let prompt = app.otherElements["extractionConflictSheet"].firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        XCTAssertTrue(prompt.buttons["Replace this file"].exists)
+        XCTAssertTrue(prompt.buttons["Replace all"].exists)
+        XCTAssertTrue(prompt.buttons["Do not replace"].exists)
+        capture(app, name: "Direct extraction — conflict choices")
+        prompt.buttons["Do not replace"].firstMatch.tap()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.buttons["Replace this file"].firstMatch.tap()
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        startExtraction()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.buttons["Replace all"].firstMatch.tap()
+        XCTAssertFalse(prompt.waitForExistence(timeout: 2))
+        XCTAssertTrue(receipt.waitForExistence(timeout: 10))
+        startExtraction()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 10))
+        prompt.buttons["Cancel task"].firstMatch.tap()
+        XCTAssertTrue(extract.waitForExistence(timeout: 5))
+        let information = app.buttons["Information"].firstMatch
+        XCTAssertTrue(information.waitForExistence(timeout: 5)); information.tap()
+        let settings = app.buttons["settingsLink"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5)); settings.tap()
+        let random = app.switches["randomExtractionFolder"].firstMatch
+        let staging = app.switches["useExtractionStaging"].firstMatch
+        XCTAssertTrue(random.waitForExistence(timeout: 5))
+        XCTAssertEqual(random.value as? String, "0")
+        XCTAssertEqual(staging.value as? String, "0")
+        capture(app, name: "Settings — random folders and staging default off")
+    }
+    @MainActor
     func testLegacyEncodingPreviewAndRecovery() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()

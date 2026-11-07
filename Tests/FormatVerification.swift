@@ -21,6 +21,13 @@ enum FormatVerification {
             precondition(progress.read().bytes == archive.entries.reduce(0) { $0 + $1.uncompressedSize }, "Decoded-output progress: \(name)")
             let bytes = try Data(contentsOf: output.appendingPathComponent("Notes.md"))
             precondition(bytes == expected, "Bytes \(name)")
+            let direct = root.appendingPathComponent("direct-" + name)
+            _ = try archive.extractForUser(outputRoot: direct, mergeExisting: true, conflict: { _ in .skip })
+            let directBytes = try Data(contentsOf: direct.appendingPathComponent("Notes.md"))
+            precondition(directBytes == expected, "Direct bytes \(name)")
+            var prompts = 0
+            _ = try archive.extractForUser(outputRoot: direct, mergeExisting: true, conflict: { _ in prompts += 1; return .replaceAll })
+            precondition(prompts == 1, "One replace-all prompt \(name)")
             if ["sample.7z", "deflate.zip", "sample.udf.iso"].contains(name) {
                 for filename in ["中文.txt", "日本語.txt"] {
                     precondition(archive.entries.contains(where: { $0.path == filename }), "Unicode index")
@@ -50,10 +57,14 @@ enum FormatVerification {
         for name in ["rar4.rar", "rar5.rar", "rar5-solid.rar", "sample.iso"] {
             let archive = try ArchiveContainer.open(url: fixtures.appendingPathComponent(name))
             let output = try archive.extract(outputRoot: root)
+            let direct = root.appendingPathComponent("direct-" + name)
+            _ = try archive.extractForUser(outputRoot: direct, mergeExisting: true, conflict: { _ in .skip })
             let files = archive.entries.filter { !$0.isDirectory }
             precondition(!files.isEmpty)
             for entry in files {
                 let data = try Data(contentsOf: output.appendingPathComponent(entry.path))
+                let directBytes = try Data(contentsOf: direct.appendingPathComponent(entry.path))
+                precondition(directBytes == data, "Direct RAR/ISO bytes")
                 precondition(data.count == entry.uncompressedSize)
                 if name == "rar4.rar" {
                     precondition(CRC32.checksum(data) == (entry.path == "random_data.bin" ? 0xb5c45cbe : 0x3435594d))

@@ -1,6 +1,6 @@
 # Files access policy
 
-Updated 2026-10-06 for 0.3.2 development. Extraction and ZIP/TAR packing share this output policy. Password-protected RAR is supported; encrypted ZIP/7z is not.
+Updated 2026-11-07 for 0.3.4 build 11. Password-protected RAR is supported; encrypted ZIP/7z is not.
 
 ## Input
 
@@ -19,7 +19,9 @@ Use iOS authorization and provider write capability, not storage provenance:
 
 Reject files, symbolic-link roots, known read-only folders and missing/unmounted destinations. Revalidate inside coordination. Metadata permits a write attempt, not a guarantee that I/O will succeed.
 
-Hold the security grant throughout the coordinated directory write, extraction, CRC verification, same-volume rename and rollback. Stream directly into a fresh `.ArchiveDesk-UUID` staging folder on the chosen volume. Publish `Extracted-UUID` only after all selected entries pass. Never merge, replace or delete existing content. Cleanup removes only the owned staging folder. A failed rollback reports its exact unfinished folder; it does not claim cleanup succeeded. No persistent bookmark/standing grant is retained.
+Hold the security grant throughout the coordinated directory write, conflict decisions and decoding. By default write directly into the selected directory. Preflight all existing regular-file conflicts: replace one, replace all in this task, skip, or cancel. Cancellation during decisions changes no existing file. Before replacing, recheck the original identity and move it beside the output as `ArchiveDesk-backup-UUID`; never delete the original. Same-name directories merge, while links, hard links and file/directory type conflicts are refused. Direct failures/cancellation may leave incomplete output; the destination is never recursively cleaned up.
+
+Random `Extracted-UUID` output folders and complete output staging are separate opt-in switches in Information → Settings. Both default off and are absent from normal extraction controls. Optional staging remains on the selected output volume; after decode verification, either publish a new random folder or merge using the same decisions. Cleanup removes only owned temporary output. A failed rollback reports the unfinished folder. No persistent bookmark/standing grant is retained. Necessary decoder CRC/authentication checks remain part of reading; ordinary extraction does not run an additional whole-archive test.
 
 Show a location receipt, not a live external document. View the output in Files. Completed publication into a provider directory is not confirmation of cloud-server upload. No additional unrestricted export path is introduced by this change.
 
@@ -28,6 +30,8 @@ Show a location receipt, not a live external document. View the output in Files.
 Public iOS APIs do not expose universal provider identity for an arbitrary picker URL. `NSFileProviderManager.getIdentifierForUserVisibleFile` is limited to the caller's own provider/domain. Third-party cached items can have ordinary local-volume properties.
 
 Universal provider identification is not required by the revised policy. No guessed provider paths, private identifiers, manual claims of being local, or private APIs are used. A picked URL is not a promise of successful I/O: access can be revoked, a device can disconnect, or a provider can reject writes. Actual coordination/write errors are surfaced and owned staging cleanup is attempted without modifying pre-existing content.
+
+The input snapshot described above is unchanged: imported archives and packing sources can still require internal disk capacity. Disabling output staging does not remove input snapshots or provider-managed downloads. This release does not claim fully zero-copy USB-to-USB operation.
 
 ## Verification
 

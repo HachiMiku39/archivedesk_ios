@@ -54,6 +54,13 @@ final class WorkspaceModel: ObservableObject {
     @Published var exportedURL: URL?
     @Published var exportedEntryPath: String?
     @Published var extractionLocation: String?
+    @Published var mergeExtractedFiles = !UserDefaults.standard.bool(forKey: "randomExtractionFolder") {
+        didSet { UserDefaults.standard.set(!mergeExtractedFiles, forKey: "randomExtractionFolder") }
+    }
+    @Published var useExtractionStaging = UserDefaults.standard.bool(forKey: "useExtractionStaging") {
+        didSet { UserDefaults.standard.set(useExtractionStaging, forKey: "useExtractionStaging") }
+    }
+    @Published var extractionConflict: ExtractionConflictPrompt?
     @Published var diagnostics = LayoutDiagnostics()
     @Published var hingeStatus = "Unavailable"
     @Published var packingSources: [PackingSource] = []
@@ -66,6 +73,7 @@ final class WorkspaceModel: ObservableObject {
     let mediaPreview = MediaPreviewModel()
     var transferMetrics: OperationMetrics? { performance.transfer }
     private var passwordAction: PasswordAction?
+    private var pendingConflictAnswer: (ExtractionConflictPrompt, ExtractionConflictChoice)?
     private var operation: Task<Void, Never>?
     private var previewOperation: Task<Void, Never>?
     private var resourceMonitor: Task<Void, Never>?
@@ -362,13 +370,23 @@ final class WorkspaceModel: ObservableObject {
         let mailbox = startTransfer()
         isBusy = true; status = String(localized: "Extracting…"); exportedURL = nil
         exportedEntryPath = nil; extractionLocation = nil
+        let mergeExisting = mergeExtractedFiles
+        let useStaging = useExtractionStaging
         operation = Task {
             guard await waitForPreview(priorPreview) else { return }
             let root = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Extractions", isDirectory: true)
             let worker = Task.detached(priority: .userInitiated) {
                 let progress: ArchiveProgress = { mailbox.update($0, $1) }
-                if let pickedFolder { return try CoordinatedFileAccess.extract(archive, paths: paths, to: pickedFolder, password: password, progress: progress) }
-                return ExtractionResult(directory: try archive.extract(paths: paths, outputRoot: root, password: password, progress: progress), destination: .appDocuments)
+                let conflict: (String) throws -> ExtractionConflictChoice = { path in
+                    let prompt = ExtractionConflictPrompt(path: path)
+                    Task { @MainActor in
+                        if self.isBusy { self.extractionConflict = prompt }
+                        else { prompt.resolve(.cancel) }
+                    }
+                    return try prompt.wait()
+                }
+                if let pickedFolder { return try CoordinatedFileAccess.extract(archive, paths: paths, to: pickedFolder, password: password, progress: progress, mergeExisting: mergeExisting, useStaging: useStaging, conflict: conflict) }
+                return ExtractionResult(directory: try archive.extractForUser(paths: paths, outputRoot: root, password: password, progress: progress, mergeExisting: mergeExisting, useStaging: useStaging, conflict: conflict), destination: .appDocuments)
             }
             do {
                 let result = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
@@ -379,19 +397,40 @@ final class WorkspaceModel: ObservableObject {
                 if case .items = scope { extractionSelection = [] }
                 // Display the receipt only; do not read the external URL after its grant ends.
                 extractionLocation = (pickedFolder?.lastPathComponent ?? String(localized: "ArchiveDesk on this device"))
-                    + "/" + result.directory.lastPathComponent
+                    + (mergeExisting ? "" : "/" + result.directory.lastPathComponent)
                 status = String(localized: "Extraction complete")
                 refreshTransfer(finished: true, succeeded: true)
             } catch {
                 refreshTransfer(finished: true)
                 if case RARFailure.passwordOrDamage = error, needsPassword { requestPassword(.extract(scope, pickedFolder), error: error.localizedDescription) }
-                else { finish(error) }
+                else {
+                    finish(error, directExtraction: !useStaging)
+                    if !useStaging, !(error is CancellationError), let message = errorMessage {
+                        errorMessage = message + "\n" + String(localized: "Direct extraction may leave incomplete files. Replaced originals remain as backups.")
+                    }
+                }
             }
+            extractionConflict?.resolve(.cancel); extractionConflict = nil
+            pendingConflictAnswer?.0.resolve(.cancel); pendingConflictAnswer = nil
             isBusy = false
         }
     }
 
-    func cancel() { operation?.cancel(); previewOperation?.cancel(); clearTextPreview(); mediaPreview.reset(); cancelPassword() }
+    func resolveExtractionConflict(_ choice: ExtractionConflictChoice) {
+        guard let prompt = extractionConflict else { return }
+        pendingConflictAnswer = (prompt, choice)
+        extractionConflict = nil
+    }
+    func finishConflictDismissal() {
+        let answer = pendingConflictAnswer; pendingConflictAnswer = nil
+        if let answer { answer.0.resolve(answer.1) }
+    }
+
+    func cancel() {
+        operation?.cancel(); extractionConflict?.resolve(.cancel); extractionConflict = nil
+        pendingConflictAnswer?.0.resolve(.cancel); pendingConflictAnswer = nil
+        previewOperation?.cancel(); clearTextPreview(); mediaPreview.reset(); cancelPassword()
+    }
 
     private func requestPassword(_ action: PasswordAction, error: String? = nil) {
         passwordAction = action; passwordError = error; isPasswordPresented = true
@@ -491,12 +530,14 @@ final class WorkspaceModel: ObservableObject {
         }
     }
 
-    private func finish(_ error: Error) {
+    private func finish(_ error: Error, directExtraction: Bool = false) {
         refreshTransfer(finished: true)
         if error is CancellationError {
             status = String(localized: "Cancelled")
             if stoppedForMemory {
-                errorMessage = String(localized: "Stopped to protect app memory. Temporary output was rolled back. Try a smaller selection or an archive with a smaller dictionary.")
+                errorMessage = directExtraction
+                    ? String(localized: "Stopped to protect app memory. Direct output may be incomplete; replaced originals remain as backups.")
+                    : String(localized: "Stopped to protect app memory. Temporary output was rolled back. Try a smaller selection or an archive with a smaller dictionary.")
             }
         }
         else { errorMessage = error.localizedDescription; status = String(localized: "Failed") }

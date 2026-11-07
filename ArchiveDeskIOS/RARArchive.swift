@@ -132,7 +132,7 @@ struct RARArchive: Sendable {
         return bytes
     }
     func extract(paths: Set<String>? = nil, outputRoot: URL, createOutputRoot: Bool = true, password: String? = nil,
-                 progress: @escaping ArchiveProgress = { _, _ in }) throws -> URL {
+                 progress: @escaping ArchiveProgress = { _, _ in }, direct: DirectExtractionOutput? = nil) throws -> URL {
         let selected = entries.filter { paths == nil || paths!.contains($0.path) }
         guard !selected.isEmpty, selected.allSatisfy(\.isExtractable) else { throw RARFailure.unsupported }
         if selected.contains(where: requiresPassword), password == nil { throw RARFailure.passwordRequired }
@@ -143,14 +143,18 @@ struct RARArchive: Sendable {
         let values = try outputRoot.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .volumeAvailableCapacityKey])
         guard values.isDirectory == true, values.isSymbolicLink != true else { throw DestinationFailure.invalidDirectory }
         try StorageBudget.require(total + 16 * 1024 * 1024, at: outputRoot)
-        let stage = outputRoot.appendingPathComponent(".ArchiveDesk-\(UUID())", isDirectory: true)
-        try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: false)
+        let stage = direct?.directory ?? outputRoot.appendingPathComponent(".ArchiveDesk-\(UUID())", isDirectory: true)
+        if direct == nil { try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: false) }
         do {
             // Reuse one task-local handle; reopening the whole image per file
             // would repeatedly index hundreds of UDF entries on USB storage.
             let imageReader = isUDF ? try RARReader(url: url, password: nil, udf: true) : nil
             for entry in selected {
                 try Task.checkCancellation()
+                if let direct {
+                    if !direct.shouldWrite(entry) { meter.advance(Int(clamping: entry.uncompressedSize)); continue }
+                    try direct.prepare(entry)
+                }
                 let file = stage.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
                 if entry.isDirectory {
                     try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
@@ -167,11 +171,13 @@ struct RARArchive: Sendable {
                 }
             }
             try Task.checkCancellation()
+            if direct != nil { meter.complete(); return outputRoot }
             let final = outputRoot.appendingPathComponent("Extracted-\(UUID())", isDirectory: true)
             try FileManager.default.moveItem(at: stage, to: final)
             meter.complete()
             return final
         } catch {
+            if direct != nil { throw error }
             let original = error
             do { try FileManager.default.removeItem(at: stage) }
             catch { throw ExtractionRollbackFailure(stagingFolder: stage.lastPathComponent, cause: original.localizedDescription) }
