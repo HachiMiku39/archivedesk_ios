@@ -259,8 +259,7 @@ struct MultiFormatArchive: Sendable {
                     continue
                 }
                 try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try StorageBudget.createFile(at: output)
-                let handle = try FileHandle(forWritingTo: output)
+                let handle = try StorageBudget.createFile(at: output)
                 do {
                     try NativeArchiveReader.stream(entry, from: url) {
                         try handle.write(contentsOf: $0); meter.advance($0.count)

@@ -93,9 +93,9 @@ enum StorageBudget {
             throw ArchiveFailure.storageSpace(bytes, available)
         }
     }
-    static func createFile(at url: URL) throws {
-        let fd = url.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600) }
+    static func createFile(at url: URL) throws -> FileHandle {
+        let fd = url.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) }
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        guard Darwin.close(fd) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 }

@@ -303,8 +303,7 @@ struct ZIPArchive: Sendable {
         var offset = try payloadOffset(entry, reader: reader)
         try FileManager.default.createDirectory(
           at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try StorageBudget.createFile(at: output)
-        let handle = try FileHandle(forWritingTo: output)
+        let handle = try StorageBudget.createFile(at: output)
         do {
           if entry.compressionMethod == 8 {
             try streamDeflate(entry, reader: reader) {

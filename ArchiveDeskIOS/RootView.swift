@@ -74,20 +74,20 @@ struct RootView: View {
                         Text("File already exists").font(.title2)
                         Text(verbatim: prompt.path).textSelection(.enabled)
                         Text("Replaced originals are kept as backups beside the output files.").font(.caption).foregroundStyle(.secondary)
-                        Button("Replace this file", role: .destructive) { model.resolveExtractionConflict(.replace) }
+                        Button("Replace this file", role: .destructive) { model.resolveExtractionConflict(prompt, .replace) }
                             .accessibilityIdentifier("conflictReplace")
-                        Button("Replace all", role: .destructive) { model.resolveExtractionConflict(.replaceAll) }
+                        Button("Replace all", role: .destructive) { model.resolveExtractionConflict(prompt, .replaceAll) }
                             .accessibilityIdentifier("conflictReplaceAll")
-                        Button("Do not replace") { model.resolveExtractionConflict(.skip) }
+                        Button("Do not replace") { model.resolveExtractionConflict(prompt, .skip) }
                             .accessibilityIdentifier("conflictSkip")
-                        Button("Cancel task", role: .cancel) { model.resolveExtractionConflict(.cancel) }
+                        Button("Cancel task", role: .cancel) { model.resolveExtractionConflict(prompt, .cancel) }
                     }.buttonStyle(.bordered).padding(24).frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityElement(children: .contain).accessibilityIdentifier("extractionConflictSheet")
                 }.presentationDetents([.medium, .large]).interactiveDismissDisabled()
             }
-            .sheet(isPresented: $model.isPasswordPresented, onDismiss: {
-                if model.isPasswordPresented == false { model.cancelPassword() }
-            }) { ArchivePasswordView(model: model) }
+            .sheet(isPresented: $model.isPasswordPresented, onDismiss: model.finishPasswordDismissal) {
+                ArchivePasswordView(model: model)
+            }
             .onChange(of: scenePhase) { _, phase in
                 // Foreground-only MVP. Folding itself never cancels or resets state.
                 if phase == .background { model.setForeground(false) }

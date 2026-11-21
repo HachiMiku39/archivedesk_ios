@@ -73,6 +73,7 @@ final class WorkspaceModel: ObservableObject {
     let mediaPreview = MediaPreviewModel()
     var transferMetrics: OperationMetrics? { performance.transfer }
     private var passwordAction: PasswordAction?
+    private var submittedPassword: String?
     private var pendingConflictAnswer: (ExtractionConflictPrompt, ExtractionConflictChoice)?
     private var operation: Task<Void, Never>?
     private var previewOperation: Task<Void, Never>?
@@ -149,7 +150,10 @@ final class WorkspaceModel: ObservableObject {
         previewOperation?.cancel()
         mediaPreview.reset()
         clearTextPreview()
-        if isBusy && !stoppedForMemory { stoppedForMemory = true; operation?.cancel() }
+        if isBusy && !stoppedForMemory {
+            stoppedForMemory = true
+            operation?.cancel(); cancelExtractionConflicts()
+        }
     }
 
     /// Cancel and drain the previous decoder before starting another worker.
@@ -191,7 +195,14 @@ final class WorkspaceModel: ObservableObject {
         isBusy = true; status = String(localized: "Preparing file…")
         let mailbox = startTransfer()
         operation = Task {
-            guard await waitForPreview(priorPreview) else { return }
+            guard await waitForPreview(priorPreview) else {
+                // The dismissed password sheet handed ownership of its snapshot
+                // to this retry, even if cancellation precedes decoder startup.
+                if alreadyPrivate, password != nil, archive?.url != url {
+                    try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+                }
+                return
+            }
             let worker = Task.detached(priority: .userInitiated) {
                 let snapshot = alreadyPrivate ? url : try CoordinatedFileAccess.snapshot(of: url, progress: { mailbox.update($0, $1) })
                 do {
@@ -229,11 +240,11 @@ final class WorkspaceModel: ObservableObject {
                 status = String(localized: "Archive ready")
                 refreshTransfer(finished: true, succeeded: true)
             } catch {
-                if alreadyPrivate, password != nil, case RARFailure.passwordOrDamage = error {
+                if !Task.isCancelled, alreadyPrivate, password != nil, case RARFailure.passwordOrDamage = error {
                     requestPassword(.open(url), error: error.localizedDescription)
                 } else {
                     if alreadyPrivate, archive?.url != url { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-                    finish(error)
+                    finish(Task.isCancelled ? CancellationError() : error)
                 }
             }
             isBusy = false
@@ -380,7 +391,9 @@ final class WorkspaceModel: ObservableObject {
                 let conflict: (String) throws -> ExtractionConflictChoice = { path in
                     let prompt = ExtractionConflictPrompt(path: path)
                     Task { @MainActor in
-                        if self.isBusy { self.extractionConflict = prompt }
+                        // The mailbox belongs to this extraction. An older worker
+                        // can enqueue its presentation just as cancellation wins.
+                        if self.progressMailbox === mailbox, self.operation?.isCancelled == false { self.extractionConflict = prompt }
                         else { prompt.resolve(.cancel) }
                     }
                     return try prompt.wait()
@@ -402,7 +415,8 @@ final class WorkspaceModel: ObservableObject {
                 refreshTransfer(finished: true, succeeded: true)
             } catch {
                 refreshTransfer(finished: true)
-                if case RARFailure.passwordOrDamage = error, needsPassword { requestPassword(.extract(scope, pickedFolder), error: error.localizedDescription) }
+                if Task.isCancelled { finish(CancellationError(), directExtraction: !useStaging) }
+                else if case RARFailure.passwordOrDamage = error, needsPassword { requestPassword(.extract(scope, pickedFolder), error: error.localizedDescription) }
                 else {
                     finish(error, directExtraction: !useStaging)
                     if !useStaging, !(error is CancellationError), let message = errorMessage {
@@ -410,14 +424,13 @@ final class WorkspaceModel: ObservableObject {
                     }
                 }
             }
-            extractionConflict?.resolve(.cancel); extractionConflict = nil
-            pendingConflictAnswer?.0.resolve(.cancel); pendingConflictAnswer = nil
+            cancelExtractionConflicts()
             isBusy = false
         }
     }
 
-    func resolveExtractionConflict(_ choice: ExtractionConflictChoice) {
-        guard let prompt = extractionConflict else { return }
+    func resolveExtractionConflict(_ prompt: ExtractionConflictPrompt, _ choice: ExtractionConflictChoice) {
+        guard extractionConflict === prompt else { return }
         pendingConflictAnswer = (prompt, choice)
         extractionConflict = nil
     }
@@ -426,19 +439,29 @@ final class WorkspaceModel: ObservableObject {
         if let answer { answer.0.resolve(answer.1) }
     }
 
-    func cancel() {
-        operation?.cancel(); extractionConflict?.resolve(.cancel); extractionConflict = nil
+    private func cancelExtractionConflicts() {
+        extractionConflict?.resolve(.cancel); extractionConflict = nil
         pendingConflictAnswer?.0.resolve(.cancel); pendingConflictAnswer = nil
+    }
+    func cancel() {
+        operation?.cancel(); cancelExtractionConflicts()
         previewOperation?.cancel(); clearTextPreview(); mediaPreview.reset(); cancelPassword()
     }
 
     private func requestPassword(_ action: PasswordAction, error: String? = nil) {
-        passwordAction = action; passwordError = error; isPasswordPresented = true
+        passwordAction = action; submittedPassword = nil; passwordError = error; isPasswordPresented = true
         status = String(localized: "Password required")
     }
     func submitPassword(_ password: String) {
-        guard !isBusy, let action = passwordAction else { return }
-        passwordAction = nil; passwordError = nil; isPasswordPresented = false
+        guard isPasswordPresented, !isBusy, passwordAction != nil else { return }
+        submittedPassword = password; isPasswordPresented = false
+    }
+    func finishPasswordDismissal() {
+        guard !isPasswordPresented else { return }
+        // A quick rejection can request another sheet. Start verification only
+        // after the previous presentation has actually finished dismissing.
+        guard !isBusy, let action = passwordAction, let password = submittedPassword else { cancelPassword(); return }
+        passwordAction = nil; submittedPassword = nil; passwordError = nil
         switch action {
         case .open(let url): importArchive(url, alreadyPrivate: true, password: password)
         case .preview(let path): if navigation.selection == path { select(path, password: password) }
@@ -450,7 +473,7 @@ final class WorkspaceModel: ObservableObject {
         if case .open(let url) = passwordAction, archive?.url != url {
             try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
         }
-        passwordAction = nil; passwordError = nil; isPasswordPresented = false
+        passwordAction = nil; submittedPassword = nil; passwordError = nil; isPasswordPresented = false
     }
 
     func addPackingSources(_ urls: [URL]) {

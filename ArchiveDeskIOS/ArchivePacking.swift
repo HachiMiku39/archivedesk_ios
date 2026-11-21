@@ -108,8 +108,7 @@ enum PackingInput {
                 guard size <= ArchiveSafety.maximumExpandedBytes - total else { throw ArchiveFailure.resourceLimit("256 GiB source bytes") }
                 total += size
                 try StorageBudget.require(size + 16 * 1024 * 1024, at: directory)
-                try StorageBudget.createFile(at: output)
-                let target = try FileHandle(forWritingTo: output)
+                let target = try StorageBudget.createFile(at: output)
                 defer { try? target.close() }
                 var written: UInt64 = 0
                 while true {

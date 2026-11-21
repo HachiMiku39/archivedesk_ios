@@ -41,9 +41,25 @@ enum CoreVerification {
         preview.ready(previewInfo, kind: .video, budget: MediaPreviewBudget.choose(physicalMemory: 6 * 1024 * 1024 * 1024,
             headroom: nil, lowPower: false, thermalLimited: false), generation: previewID)
         check(preview.control(generation: previewID) != nil, "Ready preview accepts decoder controls")
+        let frame = ArchiveMediaFrame(kind: 1, bytes: Data(repeating: 0, count: 4), width: 1, height: 1,
+                                     samples: 0, time: 0, duration: 0.1)
+        preview.seek(to: 0.5)
+        try preview.show(frame, generation: previewID, serial: 0)
+        check(preview.image == nil, "A thumbnail decoded before a newer seek cannot update the preview")
+        check(!preview.fail(MediaPreviewFailure.limit, generation: previewID, serial: 0) && preview.phase == .ready,
+              "A late error from a superseded seek leaves the current preview playable")
+        try preview.show(frame, generation: previewID, serial: 1)
+        check(preview.image != nil, "The current seek can publish its thumbnail")
         preview.fail(MediaPreviewFailure.limit, generation: previewID)
         check(preview.control(generation: previewID) == nil, "Failed presentation lets decoder worker release staged media")
-        check(preview.drain(generation: previewID, serial: 0, end: 1), "EOF drain exits after presentation failure")
+        check(preview.drain(generation: previewID, serial: 1, end: 1), "EOF drain exits after presentation failure")
+        let consumerExited = try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask { try await preview.consume(frame, generation: previewID, serial: 1); return true }
+            group.addTask { try await Task.sleep(for: .seconds(2)); return false }
+            defer { group.cancelAll() }
+            return try await group.next()
+        }
+        check(consumerExited == true, "A failed presentation releases a waiting frame without requiring another selection")
         var sampler = ProcessSampler()
         let baseline = sampler.sample()
         check(baseline.cpuPercent == nil && (baseline.memoryBytes ?? 0) > 0, "First process CPU sample / footprint")
@@ -100,6 +116,21 @@ enum CoreVerification {
 
         let container = ArchiveContainer.zip(archive)
         for staged in [false, true] {
+            let destination = root.appendingPathComponent("save-during-prompt-\(staged)")
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+            let edited = destination.appendingPathComponent("empty.bin")
+            try Data("old".utf8).write(to: edited)
+            do {
+                _ = try container.extractForUser(paths: ["empty.bin"], outputRoot: destination, mergeExisting: true,
+                                                 useStaging: staged, conflict: { _ in
+                    try Data("new".utf8).write(to: edited, options: .atomic)
+                    return .replace
+                })
+                fatalError("Accepted a conflict decision for an older version")
+            } catch DestinationFailure.changed {
+                check(try Data(contentsOf: edited) == Data("new".utf8), "Keep the concurrent save")
+                check(try FileManager.default.contentsOfDirectory(atPath: destination.path) == ["empty.bin"], "No stale backup or staging directory")
+            }
             for mode in ["mixed", "all", "cancel"] {
                 FileHandle.standardError.write(Data("CONFLICT CASE staged=\(staged) mode=\(mode)\n".utf8))
                 let destination = root.appendingPathComponent("conflicts-\(staged)-\(mode)")
@@ -324,9 +355,38 @@ enum CoreVerification {
         check(encryptedModel.isPasswordPresented && encryptedModel.previewText == nil && encryptedModel.mediaPreview.phase == .locked && encryptedModel.mediaPreview.info == nil,
               "Encrypted ZIP selection requests a password before preview")
         encryptedModel.submitPassword("test-only-password")
+        check(!encryptedModel.isPasswordPresented && encryptedModel.mediaPreview.message == nil,
+              "Submitting dismisses the sheet before starting the password check")
+        encryptedModel.finishPasswordDismissal()
         check(!encryptedModel.isPasswordPresented && encryptedModel.previewText == nil && encryptedModel.mediaPreview.phase == .locked && encryptedModel.mediaPreview.info == nil,
               "Unsupported encrypted ZIP remains locked after password input; no decoder starts")
+        check(encryptedModel.mediaPreview.message != nil, "Password check has run after dismissal")
+        encryptedModel.select(secret.entries[0].path)
+        encryptedModel.submitPassword("cancel-before-dismissal")
         encryptedModel.cancel()
+        encryptedModel.finishPasswordDismissal()
+        check(encryptedModel.mediaPreview.phase == .empty && !encryptedModel.isPasswordPresented,
+              "Cancelling during sheet dismissal discards the submitted password action")
+        let retryDirectory = temporary.appendingPathComponent("password-retry")
+        try FileManager.default.createDirectory(at: retryDirectory, withIntermediateDirectories: false)
+        let retryURL = retryDirectory.appendingPathComponent("snapshot.zip")
+        try fixture.write(to: retryURL)
+        encryptedModel.importArchive(retryURL, alreadyPrivate: true, password: "test-only-password")
+        encryptedModel.cancel()
+        for _ in 0..<400 where encryptedModel.isBusy { try await Task.sleep(for: .milliseconds(5)) }
+        check(!encryptedModel.isBusy && !FileManager.default.fileExists(atPath: retryDirectory.path),
+              "Cancelling a password retry before decoder startup releases its private snapshot")
+        let conflictModel = WorkspaceModel()
+        let oldPrompt = ExtractionConflictPrompt(path: "same.txt")
+        let newPrompt = ExtractionConflictPrompt(path: "same.txt")
+        conflictModel.extractionConflict = oldPrompt
+        conflictModel.setForeground(false)
+        conflictModel.extractionConflict = newPrompt
+        conflictModel.resolveExtractionConflict(oldPrompt, .replaceAll)
+        check(conflictModel.extractionConflict === newPrompt, "Dismissed sheet cannot approve another prompt for the same name")
+        conflictModel.resolveExtractionConflict(newPrompt, .skip)
+        conflictModel.finishConflictDismissal()
+        check(try newPrompt.wait() == .skip && oldPrompt.wait() == .cancel, "Each worker receives its own decision")
         let model = WorkspaceModel()
         model.importArchive(archive.url, alreadyPrivate: true)
         for _ in 0..<400 where model.isBusy { try await Task.sleep(for: .milliseconds(5)) }

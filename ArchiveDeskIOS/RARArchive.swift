@@ -160,8 +160,7 @@ struct RARArchive: Sendable {
                     try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
                 } else {
                     try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try StorageBudget.createFile(at: file)
-                    let target = try FileHandle(forWritingTo: file)
+                    let target = try StorageBudget.createFile(at: file)
                     defer { try? target.close() }
                     let reader = try imageReader ?? RARReader(url: url, password: password)
                     try reader.stream(entry, password: password) {

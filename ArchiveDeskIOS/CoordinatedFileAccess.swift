@@ -20,8 +20,7 @@ enum CoordinatedFileAccess {
                     let size = (try readableURL.resourceValues(forKeys: [.fileSizeKey])).fileSize.map { UInt64(max(0, $0)) } ?? 0
                     if size > 0 { try StorageBudget.require(size + 16 * 1024 * 1024, at: directory) }
                     let meter = ExtractionProgress(total: size, callback: progress)
-                    try StorageBudget.createFile(at: target)
-                    let output = try FileHandle(forWritingTo: target)
+                    let output = try StorageBudget.createFile(at: target)
                     defer { try? output.close() }
                     while true {
                         try Task.checkCancellation()

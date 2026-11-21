@@ -61,8 +61,7 @@ enum PackingRARVerification {
         let local20 = root.appendingPathComponent("Local20MiB", isDirectory: true)
         try FileManager.default.createDirectory(at: local20, withIntermediateDirectories: false)
         let payload20 = local20.appendingPathComponent("payload.bin")
-        try StorageBudget.createFile(at: payload20)
-        let localHandle = try FileHandle(forWritingTo: payload20)
+        let localHandle = try StorageBudget.createFile(at: payload20)
         var block20 = Data(count: 256 * 1024), seed20: UInt32 = 0x12345678
         block20.withUnsafeMutableBytes { (bytes: UnsafeMutableRawBufferPointer) in
             for index in bytes.indices {

@@ -132,11 +132,14 @@ final class MediaPreviewModel: ObservableObject {
             }
         }
     }
-    func fail(_ error: Error, generation id: UUID) {
-        guard generation == id else { return }
+    @discardableResult
+    func fail(_ error: Error, generation id: UUID, serial: Int? = nil) -> Bool {
+        guard generation == id, phase != .failed else { return false }
+        if let serial, !acceptsPlayback(generation: id, serial: serial) { return false }
         presentationTask?.cancel(); presentationTask = nil; videoBuffer.removeAll()
         sink?.stop(); sink = nil; isPlaying = false; image = nil
         message = error.localizedDescription; phase = .failed
+        return true
     }
     func skipArtwork(generation id: UUID) {
         guard generation == id else { return }
@@ -149,6 +152,9 @@ final class MediaPreviewModel: ObservableObject {
     func control(generation id: UUID) -> MediaPreviewControl? {
         guard generation == id, phase == .ready else { return nil }
         return MediaPreviewControl(playing: isPlaying, seekSerial: seekSerial, target: target, position: playhead)
+    }
+    fileprivate func acceptsPlayback(generation id: UUID, serial: Int) -> Bool {
+        generation == id && phase == .ready && seekSerial == serial
     }
     func togglePlaying() {
         guard phase == .ready, kind != .image else { return }
@@ -170,8 +176,9 @@ final class MediaPreviewModel: ObservableObject {
         timebase.reset(position: target, now: ProcessInfo.processInfo.systemUptime)
         ended = false; sink?.stop(); sink = nil; videoBuffer.removeAll()
     }
-    func show(_ frame: ArchiveMediaFrame, generation id: UUID) throws {
-        guard generation == id else { return }
+    func show(_ frame: ArchiveMediaFrame, generation id: UUID, serial: Int? = nil) throws {
+        guard generation == id, phase == .ready else { return }
+        if let serial, seekSerial != serial { return }
         guard frame.kind == 1, frame.width > 0, frame.height > 0,
               frame.bytes.count == frame.width * frame.height * 4,
               let provider = CGDataProvider(data: frame.bytes as CFData),
@@ -197,7 +204,7 @@ final class MediaPreviewModel: ObservableObject {
     }
     /// Bounded look-ahead; video presentation does not block following audio.
     func consume(_ event: ArchiveMediaFrame, generation id: UUID, serial: Int) async throws {
-        while generation == id && seekSerial == serial {
+        while acceptsPlayback(generation: id, serial: serial) {
             try Task.checkCancellation()
             guard MemoryPolicy.headroom().map({ $0 >= 64 * 1024 * 1024 }) ?? true else { throw MediaPreviewFailure.limit }
             if !isPlaying { try await Task.sleep(for: .milliseconds(30)); continue }
@@ -207,7 +214,7 @@ final class MediaPreviewModel: ObservableObject {
                 if event.time > playhead + 0.35 { try await Task.sleep(for: .milliseconds(5)); continue }
                 if sink == nil {
                     let candidate = try await AudioPreviewSink()
-                    guard generation == id && seekSerial == serial else { candidate.stop(); return }
+                    guard acceptsPlayback(generation: id, serial: serial), !Task.isCancelled else { candidate.stop(); return }
                     sink = candidate
                     if !isPlaying { candidate.pause(); continue }
                 }
@@ -217,7 +224,7 @@ final class MediaPreviewModel: ObservableObject {
         }
     }
     func drain(generation id: UUID, serial: Int, end: Double) -> Bool {
-        guard generation == id, phase == .ready, seekSerial == serial else { return true }
+        guard acceptsPlayback(generation: id, serial: serial) else { return true }
         guard isPlaying else { return false }
         sink?.startPending()
         guard videoBuffer.isEmpty, sink?.hasPending != true, playhead >= end - 0.03 else { return false }
@@ -256,43 +263,51 @@ enum MediaPreviewWorker {
             } catch is CancellationError { throw CancellationError() }
             catch { await model.skipArtwork(generation: id) }
         }
-        if kind == .image || (kind == .video && decoder.info.hasVideo) {
-            try await thumbnail(decoder, after: 0, model: model, id: id)
+        if kind == .image {
+            try await thumbnail(decoder, after: 0, model: model, id: id, serial: 0)
+            return
         }
-        if kind == .image { return }
-        // Thumbnail preparation can advance the stream; restart before playback.
         var serial = -1
         var lastEnd = 0.0
         while true {
             try Task.checkCancellation()
             guard let control = await model.control(generation: id) else { throw CancellationError() }
-            if serial != control.seekSerial {
-                try decoder.seek(to: control.target); serial = control.seekSerial
-                lastEnd = control.target
-                if kind == .video && !control.playing && decoder.info.hasVideo {
-                    try await thumbnail(decoder, after: control.target, model: model, id: id)
-                    // Start playback at the requested position, not after the thumbnail.
+            do {
+                if serial != control.seekSerial {
+                    serial = control.seekSerial
                     try decoder.seek(to: control.target)
+                    lastEnd = control.target
+                    if kind == .video && !control.playing && decoder.info.hasVideo {
+                        try await thumbnail(decoder, after: control.target, model: model, id: id, serial: serial)
+                        // Start playback at the requested position, not after the thumbnail.
+                        try decoder.seek(to: control.target)
+                    }
                 }
-            }
-            if !control.playing { try await Task.sleep(for: .milliseconds(150)); continue }
-            if let event = try decoder.next() {
-                lastEnd = max(lastEnd, event.time + event.duration)
-                if event.time + event.duration >= control.target { try await model.consume(event, generation: id, serial: serial) }
-            } else {
-                // Wait for actual submitted media, not just a wall-clock duration.
-                while await !model.drain(generation: id, serial: serial, end: lastEnd) {
-                    try await Task.sleep(for: .milliseconds(10)); try Task.checkCancellation()
+                if !control.playing { try await Task.sleep(for: .milliseconds(150)); continue }
+                if let event = try decoder.next() {
+                    lastEnd = max(lastEnd, event.time + event.duration)
+                    if event.time + event.duration >= control.target { try await model.consume(event, generation: id, serial: serial) }
+                } else {
+                    // Wait for actual submitted media, not just a wall-clock duration.
+                    while await !model.drain(generation: id, serial: serial, end: lastEnd) {
+                        try await Task.sleep(for: .milliseconds(10)); try Task.checkCancellation()
+                    }
                 }
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                // A newer seek can arrive during decode. Only the current request can end playback.
+                if await model.fail(error, generation: id, serial: serial) { throw error }
             }
         }
     }
-    private static func thumbnail(_ decoder: ArchiveMediaDecoder, after time: Double, model: MediaPreviewModel, id: UUID) async throws {
-        for _ in 0..<4096 {
+    private static func thumbnail(_ decoder: ArchiveMediaDecoder, after time: Double, model: MediaPreviewModel,
+                                  id: UUID, serial: Int) async throws {
+        for index in 0..<4096 {
             try Task.checkCancellation()
+            if index.isMultiple(of: 16), await !model.acceptsPlayback(generation: id, serial: serial) { return }
             guard let event = try decoder.next() else { throw MediaPreviewFailure.backend("No video frame") }
             if event.kind == 1 && event.time + event.duration >= time {
-                try await model.show(event, generation: id); return
+                try await model.show(event, generation: id, serial: serial); return
             }
         }
         throw MediaPreviewFailure.limit

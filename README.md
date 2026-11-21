@@ -2,7 +2,7 @@
 
 ArchiveDesk 是面向 iPhone、iPad 和 iPhone Duo 自适应界面的压缩包浏览与安全解压工具。采用 SwiftUI 和进程内原生解码引擎，不依赖桌面版 7-Zip 命令行程序。
 
-当前测试版：**0.3.4 Beta 1（build 11）**。默认直接解压到目标目录，不随机命名、不建立完整解压输出暂存；同名文件可逐个覆盖、全部覆盖、不覆盖或取消。“新建随机命名子文件夹”和“解压暂存”仅在 信息 → 设置 中开启，默认均关闭。保留旧编码 ZIP／正文菜单、音乐标签和封面，以及 6／8／12／16 GB 资源策略。范围与验证见 [本版发布说明](docs/RELEASE-0.3.4-beta.1.md)、[存储规则](docs/STORAGE-ACCESS.md) 和 [媒体调度与资源预算](docs/MEDIA-PREVIEW.md)。
+当前测试版为 **0.3.4 Beta 2（build 12）**。当其他应用在等待覆盖确认时保存了文件，解压会停止并保留新版本。连续处理同名文件、取消 RAR 密码重试和快速拖动视频进度条时，界面会忽略上一项操作的迟到结果。[本版发布说明](docs/RELEASE-0.3.4-beta.2.md)
 
 最低系统：**iOS / iPadOS 26.0**。本版使用 Xcode 27.2 beta / iOS 27.2 SDK 构建。未签名，安装前需要自行重签。
 
@@ -14,15 +14,15 @@ ArchiveDesk 是面向 iPhone、iPad 和 iPhone Duo 自适应界面的压缩包�
 
 ## 下载与安装
 
-在 [v0.3.4-beta.1](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.3.4-beta.1) 下载 `ArchiveDesk-0.3.4-unsigned.ipa`（build 11）。
+下载 **build 12** 的未签名 arm64 真机 IPA。安装前使用自己的有效 Apple 证书与描述文件重签，或在 Xcode 选择自己的 Team 和 Bundle Identifier 后运行到设备。[下载 IPA](https://github.com/HachiMiku39/archivedesk_ios/releases/download/v0.3.4-beta.2/ArchiveDesk-0.3.4-unsigned.ipa) · [全部附件与 SHA-256 校验清单](https://github.com/HachiMiku39/archivedesk_ios/releases/tag/v0.3.4-beta.2)
 
-**新版增加直接解压及同名文件决策。** 覆盖前保留原文件旁置备份，“全部覆盖”只影响当前任务。多来源 ZIP/TAR、整目录／跨目录多选解压、密码 RAR、媒体及音乐标签、CPU/RAM、速度／进度继续保留。同一 Release 附带完整对应源码 `ArchiveDesk-0.3.4-source.tar.gz`、匹配静态重链接材料 `ArchiveDesk-0.3.4-relink-kit.tar.gz` 和 SHA-256 校验清单。旧 Release 保留，私人测试文件和截图不发布。
+同一发布页提供对应源码 `ArchiveDesk-0.3.4-source.tar.gz`、静态重链接材料 `ArchiveDesk-0.3.4-relink-kit.tar.gz` 和 `ArchiveDesk-0.3.4-SHA256SUMS.txt`。请从同一个发布标签下载这些文件。
 
-**这是未签名的 arm64 真机 IPA，不是模拟器包，不能直接安装。** 安装前必须使用自己的有效 Apple 签名证书及描述文件重新签名。也可以在 Xcode 中选择自己的 Team、调整 Bundle Identifier 后运行到设备。此发布不是 App Store / TestFlight 发行版，不承诺第三方重签工具的兼容性。
+## 本版验证
 
-本轮主机核心 174 项检查通过；格式回归 36 组通过，增加 ZIP、7z、TAR、压缩流、RAR 与 ISO/UDF 的直接输出比较和全部覆盖检查。核心覆盖直接／暂存两种模式的逐个覆盖、全部覆盖、跳过、取消、备份及可选随机目录，并确认损坏数据不会删除直接解压目标或原件备份。同一台 iPhone 18 Pro / iOS 27.2 模拟器 1 项原生流程测试通过，0 失败／0 跳过，覆盖连续冲突、全部覆盖、取消和设置默认值。历史媒体、真机与旧编码记录见 [0.3.3 Beta 2 说明](docs/RELEASE-0.3.3-beta.2.md) 和 [真机记录](docs/PHYSICAL-QA-0.3.2.md)，不计为本版重新验证。
+188 项主机核心检查通过，覆盖直接与暂存解压、覆盖确认期间保存文件、取消密码操作、解码和进度更新。iPhone 18 Pro 模拟器（iOS 27.2）通过了连续覆盖、RAR 错误密码重试后预览与解压、取消密码返回浏览器三组界面测试。格式套件及 ZIP/TAR 打包解压回归也已通过。
 
-IPA SHA-256：见同一 Release 的 `ArchiveDesk-0.3.4-SHA256SUMS.txt`。直接输出失败／取消可能留下不完整文件，备份不会自动删除。**导入压缩包和添加打包来源仍有内部快照，可能受内置空间限制**；关闭“解压暂存”只改变解压输出，不取消媒体预览、输入快照或系统提供商缓存。
+本轮验证使用 Mac 主机与模拟器。iPad 上 exFAT 的读写记录来自 0.3.2 真机测试。外置盘拔出、网盘行为及并发移动目标父目录仍有待专项验证。[发布记录](docs/RELEASE-0.3.4-beta.2.md) · [历史真机记录](docs/PHYSICAL-QA-0.3.2.md)
 
 ## 已实现的功能
 
@@ -90,7 +90,8 @@ I/O 保持 256 KiB 分块，加入分块 autorelease pool；批量打包和来�
 ## 安全与任务行为
 
 - 校验路径穿越、绝对路径、链接、Unicode/大小写冲突及目录冲突。
-- 解压到新建的独立目录，不合并或覆盖现有文件；失败或取消时清理本次临时目录。
+- 默认直接解压到所选目录，遇到同名普通文件时询问是否覆盖。覆盖前保留同目录备份。新建随机子目录和在目标盘暂存解压输出可分别在“信息 → 设置”开启，两项默认关闭。
+- 直接解压期间取消或发生错误时，已写入的文件及部分输出可能留在目标目录。导入归档和添加打包来源会创建内部快照，仍需预留内置存储空间。
 - 按块流式写入，检查容量、声明大小和格式提供的完整性信息；ZIP 额外校验 CRC。
 - TAR / ISO 没有天然文件校验和，不宣称所有格式都提供 CRC 校验。
 - 受控 C 编解码器分配单次上限 128 MiB、每线程在用上限 256 MiB；RAR5 字典限制 128 MiB。这不覆盖 C++ new 或整个应用的总内存。
@@ -102,16 +103,16 @@ I/O 保持 256 KiB 分块，加入分块 autorelease pool；批量打包和来�
 
 用具备对应 SDK 的 Xcode 打开 `ArchiveDeskIOS.xcodeproj`，选择 `ArchiveDeskIOS` scheme。Duo 调试使用 `ArchiveDeskIOS-DuoDebug`。
 
-**复现本次 IPA 建议下载 Release 中明确命名的 `ArchiveDesk-0.3.3-source.tar.gz`。** 它是完整对应项目，含新功能、依赖与发布说明，并与重链接材料配套。GitHub 自动生成的 “Source code (zip/tar.gz)” 是发布标签对应的仓库快照。
+本版完整对应源码包含工程、依赖和构建脚本，并与同一发布页的重链接材料配套。[下载源码包](https://github.com/HachiMiku39/archivedesk_ios/releases/download/v0.3.4-beta.2/ArchiveDesk-0.3.4-source.tar.gz)
 
 仓库附带 XCFramework 和校验过的上游源码压缩包。编译应用不需要安装桌面 7-Zip。未签名 Release 示例：
 
 ```sh
-export DEVELOPER_DIR=/Applications/Xcode-27.1-beta.app/Contents/Developer
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 zsh scripts/build-ios.sh iphoneos Release
 zsh scripts/package-unsigned-ipa.sh \
   "$PWD/work/Build-iphoneos-Release/Build/Products/Release-iphoneos/ArchiveDeskIOS.app" \
-  "$PWD/outputs/ArchiveDesk-0.3.3-unsigned.ipa"
+  "$PWD/outputs/ArchiveDesk-0.3.4-unsigned.ipa"
 ```
 
 若本地路径不同，调整 `DEVELOPER_DIR`。受限执行环境可能阻止 SwiftUI 宏插件或模拟器服务，请使用原生 Xcode 构建。签名分发请在 Xcode 选择自己的 Team，并按自己的描述文件与分发方式 Archive / Export。
@@ -151,30 +152,8 @@ RAR 后端包含 LGPL-2.1-or-later 与 unRAR 附加限制；Release 同时提供
 
 ## English summary
 
-ArchiveDesk 0.3.3 Beta 1 (build 9) is an unsigned arm64 iOS/iPadOS 26+ archive
-browser, safe extractor and multi-source ZIP/TAR packer. It includes CPU/RAM,
-transfer metrics, adaptive iPhone/iPad/Duo layouts, whole-folder/multi-selection
-extraction, source-built FFmpeg/dav1d bounded preview, and BOM-marked UTF-16 text.
-It preserves source-built password RAR4/RAR5 extraction; RAR creation,
-encrypted creation and split-volume workflows are not offered. It removes
-the previous third-party-cloud read-only restriction: all picked directories
-follow iOS authorization and provider write capability. Unknown provider metadata
-is not a denial of access. System permission/coordination/write errors still apply.
-Encrypted ZIP is not supported; encrypted contents never reach a preview decoder
-without successful password decryption and integrity checks. Re-sign the IPA
-before installation. Corresponding full source, matching arm64 app objects,
-media/archive libraries, relinking materials and checksums accompany the release.
-Music previews now include read-only embedded tags and JPEG/PNG album art.
-Bounded AV1/audio scheduling, adaptive 6/8/12/16 GB profiles and reduced idle
-polling improve resource behavior without claiming a whole-process memory cap.
-Final host core checks passed 118 tests without skips; the same iPad simulator
-passed normal and forced-6-GB media cases, not physical memory-pressure tests.
-The iPhone Air user confirmed normal picture/sound and no exit on build 9.
-On a physical iPad Pro 11-inch (M4) / iPadOS 27.2, local ZIP/TAR packing and
-the large ISO/ZIP round-trip passed; all 1,069 local round-trip files matched
-SHA-256. exFAT USB ISO extraction, ZIP creation and full ZIP extraction completed,
-but independent post-write USB hashes remain unverified. The 23 GB scenario,
-read-only/unplug/cloud cases and energy/memory-pressure behavior remain untested.
-Stale packing output-path display and USB zero-speed wait periods remain open.
-The published IPA is build 9, not the earlier local build 6. Private test media,
-device logs and signing credentials are excluded from all release assets.
+ArchiveDesk 0.3.4 Beta 2 (build 12) browses and extracts archives and creates multi-source ZIP or TAR files on iOS and iPadOS 26 or later. It supports password-protected RAR4/RAR5 extraction, FFmpeg/dav1d media previews, music tags and album art, CPU/RAM usage and transfer progress.
+
+Build 12 preserves a newer save made while an overwrite prompt is open, binds conflict answers to their extraction task, and discards outdated preview frames after a seek. Direct extraction into the selected directory is the default. Output staging and random subfolder names are separate settings.
+
+The core suite passed 188 checks. Three iPhone simulator UI scenarios covered repeated conflicts and encrypted RAR password handling. The unsigned arm64 device IPA requires re-signing. Download its matching source, relink kit and checksums from the same release.

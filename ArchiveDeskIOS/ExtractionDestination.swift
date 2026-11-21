@@ -43,6 +43,31 @@ enum ExtractionPublication {
     guard errno == ENOENT else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     return nil
   }
+
+  /// Revalidate the file approved by the prompt, including the identity of the
+  /// item actually moved. Both names stay on the selected destination volume.
+  static func backUp(_ target: URL, matching old: stat) throws -> URL {
+    func matches(_ current: stat) -> Bool {
+      current.st_dev == old.st_dev && current.st_ino == old.st_ino &&
+        current.st_mode == old.st_mode && (current.st_mode & S_IFMT) == S_IFREG &&
+        current.st_nlink == 1 && current.st_size == old.st_size &&
+        current.st_mtimespec.tv_sec == old.st_mtimespec.tv_sec &&
+        current.st_mtimespec.tv_nsec == old.st_mtimespec.tv_nsec
+    }
+    guard let current = try inspect(target), matches(current),
+          current.st_ctimespec.tv_sec == old.st_ctimespec.tv_sec,
+          current.st_ctimespec.tv_nsec == old.st_ctimespec.tv_nsec else { throw DestinationFailure.changed }
+    let saved = target.deletingLastPathComponent().appendingPathComponent("ArchiveDesk-backup-" + UUID().uuidString)
+    let fm = FileManager.default
+    try fm.moveItem(at: target, to: saved)
+    do {
+      guard let moved = try inspect(saved), matches(moved) else { throw DestinationFailure.changed }
+    } catch {
+      try? fm.moveItem(at: saved, to: target)
+      throw error
+    }
+    return saved
+  }
   /// Merge only decoded, verified output. All conflict decisions precede writes.
   /// Originals are moved beside their replacement, never deleted or recopied.
   static func merge(_ source: URL, into destination: URL,
@@ -96,15 +121,7 @@ enum ExtractionPublication {
         else { try checkDirectory(item.target) }
         continue
       }
-      var backup: URL?
-      if let old = item.old {
-        guard let current = try inspect(item.target), current.st_dev == old.st_dev, current.st_ino == old.st_ino,
-              (current.st_mode & S_IFMT) == S_IFREG, current.st_nlink == 1, current.st_size == old.st_size,
-              current.st_mtimespec.tv_sec == old.st_mtimespec.tv_sec,
-              current.st_mtimespec.tv_nsec == old.st_mtimespec.tv_nsec else { throw DestinationFailure.changed }
-        let saved = item.target.deletingLastPathComponent().appendingPathComponent("ArchiveDesk-backup-" + UUID().uuidString)
-        try fm.moveItem(at: item.target, to: saved); backup = saved
-      }
+      let backup = try item.old.map { try backUp(item.target, matching: $0) }
       do { try fm.moveItem(at: item.file, to: item.target) }
       catch {
         if let backup, try inspect(item.target) == nil { try? fm.moveItem(at: backup, to: item.target) }
@@ -160,12 +177,7 @@ final class DirectExtractionOutput {
     let target = directory.appendingPathComponent(try ArchiveSafety.outputPath(entry.path))
     try checkParent(target)
     if let old = replacements[entry.path] {
-      guard let current = try ExtractionPublication.inspect(target), current.st_dev == old.st_dev, current.st_ino == old.st_ino,
-            (current.st_mode & S_IFMT) == S_IFREG, current.st_nlink == 1, current.st_size == old.st_size,
-            current.st_mtimespec.tv_sec == old.st_mtimespec.tv_sec,
-            current.st_mtimespec.tv_nsec == old.st_mtimespec.tv_nsec else { throw DestinationFailure.changed }
-      let backup = target.deletingLastPathComponent().appendingPathComponent("ArchiveDesk-backup-" + UUID().uuidString)
-      try FileManager.default.moveItem(at: target, to: backup)
+      _ = try ExtractionPublication.backUp(target, matching: old)
       replacements.removeValue(forKey: entry.path)
     }
   }
